@@ -10,7 +10,7 @@ import {
   storyboardGptPayload,
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
-import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260701-i2v-mode";
+import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260717-i2v-parity";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
@@ -39112,7 +39112,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
           : I2V_MODEL_PROFILE_DEFAULT;
       }
-      if (settings.use_gguf_model != null) i2vUseGgufModel.input.checked = settings.use_gguf_model !== false;
+      const useVioletsLtx23Profile = i2vModelProfileSelect.value === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8;
+      if (settings.use_gguf_model != null) i2vUseGgufModel.input.checked = useVioletsLtx23Profile ? false : settings.use_gguf_model !== false;
       i2vUnetPicker.input.value = String(settings.unet_name || i2vUnetPicker.input.value || "");
       i2vDiffusionModelPicker.input.value = String(settings.diffusion_model_name || i2vDiffusionModelPicker.input.value || DEFAULT_I2V_DIFFUSION_MODEL);
       i2vVaePicker.input.value = String(settings.vae_name || i2vVaePicker.input.value || "");
@@ -39122,10 +39123,15 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       i2vAudioVaePicker.input.value = String(settings.audio_vae_name || i2vAudioVaePicker.input.value || "");
       i2vVioletsCheckpointPicker.input.value = String(settings.violets_ltx23_checkpoint_name || i2vVioletsCheckpointPicker.input.value || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
       i2vLtxAudioTextEncoderPicker.input.value = String(settings.ltx_audio_text_encoder_name || i2vLtxAudioTextEncoderPicker.input.value || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
+      if (useVioletsLtx23Profile && !String(settings.clip_name1 || "").trim()) i2vClip1Picker.input.value = DEFAULT_VIOLETS_LTX23_TEXT_ENCODER;
       i2vFpsInput.value = Number(settings.fps || i2vFpsInput.value || 24);
       i2vWidthInput.value = Number(settings.width || i2vWidthInput.value || 1920);
       i2vHeightInput.value = Number(settings.height || i2vHeightInput.value || 1080);
       i2vSeedInput.value = Number(settings.seed || i2vSeedInput.value || 69);
+      if (I2V_SAMPLER_OPTIONS.includes(String(settings.pass1_sampler_name || ""))) i2vPass1SamplerSelect.value = settings.pass1_sampler_name;
+      if (String(settings.pass1_sigmas || "").trim()) i2vPass1SigmasInput.value = normalizeI2VSigmasText(settings.pass1_sigmas, DEFAULT_I2V_PASS1_SIGMAS);
+      if (I2V_SAMPLER_OPTIONS.includes(String(settings.pass2_sampler_name || ""))) i2vPass2SamplerSelect.value = settings.pass2_sampler_name;
+      if (String(settings.pass2_sigmas || "").trim()) i2vPass2SigmasInput.value = normalizeI2VSigmasText(settings.pass2_sigmas, DEFAULT_I2V_PASS2_SIGMAS);
       if (settings.msr_lora_name != null) ltxMsrLoraPicker.input.value = String(settings.msr_lora_name || ltxMsrLoraPicker.input.value || REQUIRED_LTX_MSR_LORA);
       if (settings.msr_first_pass_strength != null) ltxMsrFirstPassStrength.value = Number(settings.msr_first_pass_strength || ltxMsrFirstPassStrength.value || 1);
       i2vUseLora.input.checked = Boolean(settings.use_loras);
@@ -39714,6 +39720,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         storyBeatCount: allEditableSegments().filter((segment) => String(segment.story_beat || "").trim()).length,
         lyricSectionCount: allEditableSegments().filter((segment) => String(segment.lyric_section || "").trim()).length,
         videoSettings: {
+          i2v_model_profile: videoSettings.i2v_model_profile === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+            ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+            : I2V_MODEL_PROFILE_DEFAULT,
           fps: Number(videoSettings.fps || 24),
           width: Number(videoSettings.width || 1920),
           height: Number(videoSettings.height || 1080),
@@ -39726,6 +39735,12 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           clip_name2: String(videoSettings.clip_name2 || ""),
           upscale_model_name: String(videoSettings.upscale_model_name || ""),
           audio_vae_name: String(videoSettings.audio_vae_name || ""),
+          violets_ltx23_checkpoint_name: String(videoSettings.violets_ltx23_checkpoint_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT),
+          ltx_audio_text_encoder_name: String(videoSettings.ltx_audio_text_encoder_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT),
+          pass1_sampler_name: String(videoSettings.pass1_sampler_name || "euler_ancestral"),
+          pass1_sigmas: String(videoSettings.pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS),
+          pass2_sampler_name: String(videoSettings.pass2_sampler_name || "euler_ancestral"),
+          pass2_sigmas: String(videoSettings.pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS),
           msr_lora_name: String(videoSettings.msr_lora_name || REQUIRED_LTX_MSR_LORA),
           msr_first_pass_strength: Number(videoSettings.msr_first_pass_strength ?? 1),
           use_loras: Boolean(videoSettings.use_loras),
@@ -39783,10 +39798,21 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           diffusion_models: wizardOptionsFromPicker(i2vDiffusionModelPicker),
           vae: wizardOptionsFromPicker(i2vVaePicker),
           clip: Array.from(new Set([...wizardOptionsFromPicker(i2vClip1Picker), ...wizardOptionsFromPicker(i2vClip2Picker)])),
+          checkpoints: Array.from(new Set([...wizardOptionsFromPicker(i2vVioletsCheckpointPicker), ...wizardOptionsFromPicker(i2vLtxAudioTextEncoderPicker)])),
           upscale_models: wizardOptionsFromPicker(i2vUpscalePicker),
           loras: wizardOptionsFromPicker(ltxMsrLoraPicker),
           llm: llmOptions,
           mmproj: Array.from(new Set([...wizardOptionsFromSelect(i2vMmprojSelect), ...wizardOptionsFromSelect(mmprojSelect)])),
+        },
+        i2vProfileOptions: [
+          { value: I2V_MODEL_PROFILE_DEFAULT, label: "Repository Default (GGUF / diffusion model)" },
+          { value: I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8, label: "Violets LTX 2.3 FP8 (.safetensors)" },
+        ],
+        i2vSamplerOptions: I2V_SAMPLER_OPTIONS,
+        violetsProfileDefaults: {
+          checkpoint_name: DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
+          audio_text_encoder_name: DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
+          text_encoder_name: DEFAULT_VIOLETS_LTX23_TEXT_ENCODER,
         },
         sceneDefaults: {
           cameraFlow: state.builderStoryboardDefaults?.camera_flow || "balanced",

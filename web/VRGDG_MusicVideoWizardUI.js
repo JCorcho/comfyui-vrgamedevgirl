@@ -969,6 +969,17 @@ export function openMusicVideoWizard(api = {}) {
   function renderSettings(data) {
     const modelOptions = data.modelOptions || {};
     const settings = data.videoSettings || {};
+    const i2vProfileOptions = Array.isArray(data.i2vProfileOptions) && data.i2vProfileOptions.length
+      ? data.i2vProfileOptions
+      : [
+        { value: "repository_default", label: "Repository Default (GGUF / diffusion model)" },
+        { value: "violets_ltx23_fp8", label: "Violets LTX 2.3 FP8 (.safetensors)" },
+      ];
+    const violetsProfileDefaults = data.violetsProfileDefaults || {};
+    const violetsCheckpointDefault = String(violetsProfileDefaults.checkpoint_name || "10Eros_v1.4_fp8mixed_learned.safetensors");
+    const violetsAudioTextEncoderDefault = String(violetsProfileDefaults.audio_text_encoder_name || violetsCheckpointDefault);
+    const violetsTextEncoderDefault = String(violetsProfileDefaults.text_encoder_name || "gemma-3-12b-it-ablit-norms-biproj-fp8mixed.safetensors");
+    const violetsProfileSelected = String(settings.i2v_model_profile || "") === "violets_ltx23_fp8";
     const layout = el("div", "vrgdg-wizard-settings-layout");
     const settingsCard = el("div", "vrgdg-wizard-settings-card span-6");
     settingsCard.append(
@@ -1248,8 +1259,9 @@ export function openMusicVideoWizard(api = {}) {
     useGgufModel.style.cssText = "display:flex;align-items:center;gap:8px;color:#dbeafe;font-size:12px;font-weight:900;";
     const useGgufModelInput = document.createElement("input");
     useGgufModelInput.type = "checkbox";
-    useGgufModelInput.checked = settings.use_gguf_model !== false;
+    useGgufModelInput.checked = violetsProfileSelected ? false : settings.use_gguf_model !== false;
     useGgufModel.append(useGgufModelInput, document.createTextNode("Use GGUF model?"));
+    const i2vModelProfile = select(i2vProfileOptions, violetsProfileSelected ? "violets_ltx23_fp8" : "repository_default");
     const unet = comboInput(settings.unet_name || "", modelOptions.unets || [], "vrgdg-wizard-unets");
     const diffusionModel = comboInput(settings.diffusion_model_name || "", modelOptions.diffusion_models || modelOptions.unets || [], "vrgdg-wizard-diffusion-models");
     const vae = comboInput(settings.vae_name || "", modelOptions.vae || [], "vrgdg-wizard-vae");
@@ -1257,25 +1269,64 @@ export function openMusicVideoWizard(api = {}) {
     const clip2 = comboInput(settings.clip_name2 || "", modelOptions.clip || [], "vrgdg-wizard-clip2");
     const upscale = comboInput(settings.upscale_model_name || "", modelOptions.upscale_models || [], "vrgdg-wizard-upscale");
     const audioVae = comboInput(settings.audio_vae_name || "", modelOptions.vae || [], "vrgdg-wizard-audio-vae");
+    const violetsCheckpoint = comboInput(settings.violets_ltx23_checkpoint_name || violetsCheckpointDefault, modelOptions.checkpoints || [], "vrgdg-wizard-violets-checkpoint");
+    const ltxAudioTextEncoder = comboInput(settings.ltx_audio_text_encoder_name || violetsAudioTextEncoderDefault, modelOptions.checkpoints || [], "vrgdg-wizard-ltx-audio-text-encoder");
+    const profileField = settingField("I2V model profile", i2vModelProfile, "Select a loader profile. The Violets profile uses a full .safetensors checkpoint instead of the repository GGUF loader.");
     const unetField = settingField("GGUF UNet model", unet.input, "Main GGUF video generation model.");
     const diffusionModelField = settingField("Diffusion model", diffusionModel.input, "Main safetensors video generation model.");
+    const vaeField = settingField("Video VAE", vae.input, "Decodes generated video latents into final frames.");
+    const clip1Field = settingField("Gemma CLIP", clip1.input, "Model used for prompt understanding and scene guidance.");
+    const clip2Field = settingField("Text projection", clip2.input, "Projection model that aligns text features with video generation.");
+    const upscaleField = settingField("Latent upscaler", upscale.input, "Improves latent resolution before final video decoding.");
+    const audioVaeField = settingField("Audio VAE", audioVae.input, "Audio model used when syncing or conditioning video from audio.");
+    const violetsCheckpointField = settingField("LTX 2.3 FP8 checkpoint", violetsCheckpoint.input, "The Violets full .safetensors checkpoint. It supplies the video model and video VAE.");
+    const ltxAudioTextEncoderField = settingField("LTXV Audio Text Encoder", ltxAudioTextEncoder.input, "Checkpoint used by the LTXV Audio Text Encoder Loader and LTXV Audio VAE Loader.");
+    const violetsRequiredLoras = settingField(
+      "Violets required LoRAs",
+      el("div", "vrgdg-wizard-copy", "DMD: LTX2.3_DMD_reshaped_r256.safetensors @ 1.0 (locked)\nJoyAI: JoyAI-Echo-content_r256.safetensors @ 0.5 (locked)"),
+      "These are injected by the shared I2V backend only when this profile is selected. They are not editable optional-LoRA slots.",
+    );
+    violetsRequiredLoras.style.whiteSpace = "pre-line";
     const syncVideoModelPickerVisibility = () => {
+      const violetsProfile = String(i2vModelProfile.value || "") === "violets_ltx23_fp8";
       const useGguf = Boolean(useGgufModelInput.checked);
-      unetField.style.display = useGguf ? "flex" : "none";
-      diffusionModelField.style.display = useGguf ? "none" : "flex";
+      useGgufModel.style.display = violetsProfile ? "none" : "flex";
+      unetField.style.display = !violetsProfile && useGguf ? "flex" : "none";
+      diffusionModelField.style.display = !violetsProfile && !useGguf ? "flex" : "none";
+      vaeField.style.display = violetsProfile ? "none" : "flex";
+      clip1Field.style.display = "flex";
+      clip2Field.style.display = violetsProfile ? "none" : "flex";
+      upscaleField.style.display = "flex";
+      audioVaeField.style.display = violetsProfile ? "none" : "flex";
+      violetsCheckpointField.style.display = violetsProfile ? "flex" : "none";
+      ltxAudioTextEncoderField.style.display = violetsProfile ? "flex" : "none";
+      violetsRequiredLoras.style.display = violetsProfile ? "flex" : "none";
     };
     useGgufModelInput.onchange = syncVideoModelPickerVisibility;
+    i2vModelProfile.onchange = () => {
+      if (String(i2vModelProfile.value || "") === "violets_ltx23_fp8") {
+        useGgufModelInput.checked = false;
+        violetsCheckpoint.input.value = violetsCheckpointDefault;
+        ltxAudioTextEncoder.input.value = violetsAudioTextEncoderDefault;
+        clip1.input.value = violetsTextEncoderDefault;
+      }
+      syncVideoModelPickerVisibility();
+    };
     modelGrid.append(
+      profileField,
       useGgufModel,
       unetField,
       diffusionModelField,
-      settingField("Video VAE", vae.input, "Decodes generated video latents into final frames."),
-      settingField("Gemma CLIP", clip1.input, "Model used for prompt understanding and scene guidance."),
-      settingField("Text projection", clip2.input, "Projection model that aligns text features with video generation."),
-      settingField("Latent upscaler", upscale.input, "Improves latent resolution before final video decoding."),
-      settingField("Audio VAE", audioVae.input, "Audio model used when syncing or conditioning video from audio."),
+      vaeField,
+      clip1Field,
+      clip2Field,
+      upscaleField,
+      audioVaeField,
+      violetsCheckpointField,
+      ltxAudioTextEncoderField,
+      violetsRequiredLoras,
     );
-    modelCard.append(unet.list, diffusionModel.list, vae.list, clip1.list, clip2.list, upscale.list, audioVae.list, modelGrid);
+    modelCard.append(unet.list, diffusionModel.list, vae.list, clip1.list, clip2.list, upscale.list, audioVae.list, violetsCheckpoint.list, ltxAudioTextEncoder.list, modelGrid);
     syncVideoModelPickerVisibility();
 
     const gemmaCard = el("div", "vrgdg-wizard-settings-card span-4");
@@ -1311,6 +1362,31 @@ export function openMusicVideoWizard(api = {}) {
       settingField("Height", height, "Output video height in pixels."),
     );
     renderBasicsCard.append(renderGrid);
+
+    const advancedSamplerCard = el("div", "vrgdg-wizard-settings-card span-12");
+    advancedSamplerCard.append(
+      el("div", "vrgdg-wizard-settings-title", "I2V Advanced Sampling"),
+      el("div", "vrgdg-wizard-settings-subtitle", "These are the same two-pass samplers and sigma schedules used by the Video Creator. They are saved with the project or the selected scene settings."),
+    );
+    const samplerOptions = Array.from(new Set([
+      String(settings.pass1_sampler_name || "euler_ancestral"),
+      String(settings.pass2_sampler_name || "euler_ancestral"),
+      ...(Array.isArray(data.i2vSamplerOptions) ? data.i2vSamplerOptions : ["euler_ancestral", "euler", "euler_cfg_pp", "euler_ancestral_cfg_pp", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_3m_sde", "uni_pc"]),
+    ].filter(Boolean)));
+    const pass1Sampler = select(samplerOptions, settings.pass1_sampler_name || "euler_ancestral");
+    const pass2Sampler = select(samplerOptions, settings.pass2_sampler_name || "euler_ancestral");
+    const pass1Sigmas = textarea(settings.pass1_sigmas || "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0");
+    const pass2Sigmas = textarea(settings.pass2_sigmas || "0.909375, 0.725, 0.421875, 0.0");
+    pass1Sigmas.style.minHeight = "70px";
+    pass2Sigmas.style.minHeight = "70px";
+    const advancedSamplerGrid = el("div", "vrgdg-wizard-settings-fields two");
+    advancedSamplerGrid.append(
+      settingField("First-pass sampler", pass1Sampler, "Sampler for the first denoising pass."),
+      settingField("First-pass sigmas", pass1Sigmas, "Comma-separated sigma schedule for the first pass."),
+      settingField("Second-pass sampler", pass2Sampler, "Sampler for the refinement pass."),
+      settingField("Second-pass sigmas", pass2Sigmas, "Comma-separated sigma schedule for the refinement pass."),
+    );
+    advancedSamplerCard.append(advancedSamplerGrid);
 
     const loraCard = el("div", "vrgdg-wizard-settings-card span-4");
     loraCard.append(
@@ -1375,6 +1451,7 @@ export function openMusicVideoWizard(api = {}) {
       apply.textContent = "Applying...";
       try {
         await api.applySettings?.({
+          i2v_model_profile: i2vModelProfile.value === "violets_ltx23_fp8" ? "violets_ltx23_fp8" : "repository_default",
           use_gguf_model: Boolean(useGgufModelInput.checked),
           unet_name: unet.input.value,
           diffusion_model_name: diffusionModel.input.value,
@@ -1383,6 +1460,12 @@ export function openMusicVideoWizard(api = {}) {
           clip_name2: clip2.input.value,
           upscale_model_name: upscale.input.value,
           audio_vae_name: audioVae.input.value,
+          violets_ltx23_checkpoint_name: violetsCheckpoint.input.value,
+          ltx_audio_text_encoder_name: ltxAudioTextEncoder.input.value,
+          pass1_sampler_name: pass1Sampler.value,
+          pass1_sigmas: pass1Sigmas.value,
+          pass2_sampler_name: pass2Sampler.value,
+          pass2_sigmas: pass2Sigmas.value,
           text_gemma_model: textGemma.input.value,
           vision_gemma_model: visionGemma.input.value,
           mmproj_file: mmproj.input.value,
@@ -1431,7 +1514,7 @@ export function openMusicVideoWizard(api = {}) {
     syncExtraLoraVisibility();
 
     const tip = el("div", "vrgdg-wizard-tip", "Tip: field descriptions explain what each setting controls. Apply Wizard Settings writes these values back to the normal builder settings used during render.");
-    layout.append(settingsCard, quickCard, imageModeCard, imageModelCard, modelCard, gemmaCard, renderBasicsCard, loraCard, tip);
+    layout.append(settingsCard, quickCard, imageModeCard, imageModelCard, modelCard, gemmaCard, renderBasicsCard, loraCard, advancedSamplerCard, tip);
     content.append(layout);
   }
 

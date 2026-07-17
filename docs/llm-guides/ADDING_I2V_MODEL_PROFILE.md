@@ -18,6 +18,8 @@ The profile uses these defaults from `VioletsI2V.json`:
 
 The Audio Text Encoder control selects the checkpoint passed to both `LTXAVTextEncoderLoader` and `LTXVAudioVAELoader`, matching the source workflow's loader arrangement. `Text encoder / Clip model 1` is the `text_encoder` input of `LTXAVTextEncoderLoader`.
 
+The **Video Wizard → Settings** page exposes the same profile, full checkpoint, LTXV Audio Text Encoder checkpoint, locked-LoRA status, and two-pass sampler/sigma fields. Its **Apply Wizard Settings** action sends the normal persisted setting names back through the Builder's existing `saveI2VVideoSettingsFromPanel()` lifecycle; it does not have its own render implementation.
+
 ## Files and responsibilities
 
 ### `web/VRGDG_MusicVideoBuilderUI.js`
@@ -35,6 +37,7 @@ This file owns persisted Builder settings and UI controls.
 4. Add the model choices to `refreshModelChoices()`.
 5. In `syncI2VVideoModelPickerVisibility()`, hide controls that do not apply to the profile rather than leaving editable values that the backend will ignore.
 6. Keep the existing `pass1_sampler_name`, `pass1_sigmas`, `pass2_sampler_name`, and `pass2_sigmas` fields. The Builder already exposes them under **Video Settings → Advanced Settings**, with repository defaults and project/scene scoping.
+7. Add every profile control to `wizardSnapshot()` and `applyWizardSettings()` so the Wizard uses the same persisted settings object as the normal editor. Then mirror the controls in `web/VRGDG_MusicVideoWizardUI.js`.
 
 ### `VRGDG_WorkflowRunnerNodes.py`
 
@@ -70,7 +73,8 @@ To add a different full-checkpoint profile, for example `Anima LTX`, do the foll
 4. Reuse the shared I2V API template; replace only necessary loaders and references.
 5. If required adapters exist, insert fixed loader nodes ahead of the optional user-LoRA node. Never express mandatory adapters as editable UI slots.
 6. Branch in `_patch_i2v_api_prompt()` so the original repository path stays byte-for-byte equivalent for the default profile.
-7. Validate without rendering by loading the API template, applying the profile patch, and asserting loader classes, model/CLIP references, required adapter names/strengths, and sampler/sigma inputs.
+7. Mirror the new profile in the Wizard before considering the feature complete. The Wizard must send the exact setting names used by the Builder—not a parallel render payload.
+8. Validate without rendering by loading the API template, applying the profile patch, and asserting loader classes, model/CLIP references, required adapter names/strengths, and sampler/sigma inputs.
 
 ## Validation expectations
 
