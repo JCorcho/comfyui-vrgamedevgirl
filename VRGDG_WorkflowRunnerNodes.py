@@ -32,6 +32,14 @@ _MIN_LTX_INGREDIENTS_FRAMES = 121
 _DEFAULT_I2V_PASS1_SIGMAS = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 _DEFAULT_I2V_PASS2_SIGMAS = "0.909375, 0.725, 0.421875, 0.0"
 _DEFAULT_INGREDIENTS_SAMPLER = "euler_ancestral_cfg_pp"
+_I2V_MODEL_PROFILE_DEFAULT = "repository_default"
+_I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 = "violets_ltx23_fp8"
+_VIOLETS_LTX23_FP8_CHECKPOINT = "10Eros_v1.4_fp8mixed_learned.safetensors"
+_VIOLETS_LTX23_TEXT_ENCODER = "gemma-3-12b-it-ablit-norms-biproj-fp8mixed.safetensors"
+_VIOLETS_LTX23_DMD_LORA = "LTX2.3_DMD_reshaped_r256.safetensors"
+_VIOLETS_LTX23_JOYAI_LORA = "JoyAI-Echo-content_r256.safetensors"
+_VIOLETS_LTX23_DMD_NODE_ID = "9981"
+_VIOLETS_LTX23_JOYAI_NODE_ID = "9982"
 _I2V_UNET_ALIASES = {
     "LTX-2.3-22B-distilled-11-Q6_K.gguf": "LTX-2.3-22B-distilled-1.1-Q6_K.gguf",
 }
@@ -1345,6 +1353,127 @@ def _optional_api_node_id_by_class(prompt, class_type, title="", fallback_ids=()
     return ""
 
 
+def _i2v_model_profile(payload):
+    profile = str(payload.get("i2v_model_profile", _I2V_MODEL_PROFILE_DEFAULT) or "").strip()
+    if profile == _I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8:
+        return profile
+    return _I2V_MODEL_PROFILE_DEFAULT
+
+
+def _require_i2v_profile_model(category, value, label):
+    if _model_choice_exists(category, value):
+        return
+    folder_hint = category[0] if isinstance(category, (list, tuple)) else category
+    raise ValueError(
+        f"{label} '{value}' was not found in ComfyUI/models/{folder_hint}. "
+        "Install the required file, refresh/restart ComfyUI, then try again."
+    )
+
+
+def _require_i2v_profile_lora(value, label):
+    if value in set(_lora_choices()):
+        return
+    raise ValueError(
+        f"{label} '{value}' was not found in ComfyUI/models/loras. "
+        "Install the required file, refresh/restart ComfyUI, then try again."
+    )
+
+
+def _patch_violets_ltx23_fp8_profile(prompt, payload):
+    """Replace only the loader seam of the shared I2V graph for Violets' AV checkpoint.
+
+    The two-pass render graph, timing, image conditioning, samplers, and optional user
+    LoRA node remain the repository implementation. This profile swaps the model/AV
+    loaders and inserts the two required Violets LoRAs ahead of that optional LoRA node.
+    """
+    checkpoint_name = str(payload.get("violets_ltx23_checkpoint_name") or _VIOLETS_LTX23_FP8_CHECKPOINT).strip()
+    text_encoder_name = str(payload.get("clip_name1") or _VIOLETS_LTX23_TEXT_ENCODER).strip()
+    audio_text_encoder_name = str(payload.get("ltx_audio_text_encoder_name") or checkpoint_name).strip()
+    _require_i2v_profile_model("checkpoints", checkpoint_name, "Violets LTX 2.3 FP8 checkpoint")
+    _require_i2v_profile_model(("clip", "text_encoders"), text_encoder_name, "LTXV text encoder")
+    _require_i2v_profile_model("checkpoints", audio_text_encoder_name, "LTXV Audio Text Encoder checkpoint")
+    _require_i2v_profile_lora(_VIOLETS_LTX23_DMD_LORA, "Required DMD LoRA")
+    _require_i2v_profile_lora(_VIOLETS_LTX23_JOYAI_LORA, "Required JoyAI LoRA")
+
+    for slot in range(1, _MAX_LORA_SLOTS + 1):
+        optional_name = _clean_lora_name(payload.get(f"lora_{slot}", _NONE_LORA))
+        if optional_name in {_VIOLETS_LTX23_DMD_LORA, _VIOLETS_LTX23_JOYAI_LORA}:
+            raise ValueError(
+                f"{optional_name} is managed and strength-locked by the Violets LTX 2.3 FP8 profile. "
+                "Remove it from the optional video LoRA slots."
+            )
+
+    switch_id = _optional_api_node_id_by_class(
+        prompt,
+        "ComfySwitchNode",
+        "Switch-use GGUF",
+        fallback_ids=("955", "939", "959"),
+    )
+    checkpoint_loader_id = _optional_api_node_id_by_class(
+        prompt,
+        "DiffusionModelLoaderKJ",
+        fallback_ids=("956", "938", "958"),
+    )
+    if not switch_id or not checkpoint_loader_id:
+        raise ValueError("The shared I2V template is missing its selectable model-loader seam.")
+
+    # Collapse the normal GGUF/.safetensors switch onto a full checkpoint loader. The
+    # checkpoint supplies the model plus the video VAE, matching VioletsI2V without
+    # copying its workflow architecture.
+    _replace_api_input_refs(prompt, (switch_id, 0), (_VIOLETS_LTX23_JOYAI_NODE_ID, 0))
+    prompt.pop(str(switch_id), None)
+    prompt.pop("271:215", None)
+    prompt[str(checkpoint_loader_id)] = {
+        "class_type": "CheckpointLoaderSimple",
+        "inputs": {"ckpt_name": checkpoint_name},
+        "_meta": {"title": "Violets LTX 2.3 FP8 Checkpoint"},
+    }
+    _replace_api_input_refs(prompt, ("271:256", 0), (str(checkpoint_loader_id), 2))
+    prompt.pop("271:256", None)
+
+    # The selected AV checkpoint drives both the dedicated LTX audio text loader and
+    # audio VAE. Clip model 1 remains the user-selectable Gemma/text-encoder input.
+    prompt["271:216"] = {
+        "class_type": "LTXAVTextEncoderLoader",
+        "inputs": {
+            "text_encoder": text_encoder_name,
+            "ckpt_name": audio_text_encoder_name,
+            "device": "default",
+        },
+        "_meta": {"title": "LTXV Audio Text Encoder Loader"},
+    }
+    prompt["271:254"] = {
+        "class_type": "LTXVAudioVAELoader",
+        "inputs": {"ckpt_name": audio_text_encoder_name},
+        "_meta": {"title": "LTXV Audio VAE Loader"},
+    }
+
+    # These are deliberately separate fixed nodes, rather than configurable entries
+    # in the optional-LoRA node. This prevents either required LoRA or either strength
+    # from being removed, overridden, or accidentally applied twice by the UI.
+    _replace_api_input_refs(prompt, ("271:216", 0), (_VIOLETS_LTX23_JOYAI_NODE_ID, 1))
+    prompt[_VIOLETS_LTX23_DMD_NODE_ID] = {
+        "class_type": "LoraLoaderModelOnly",
+        "inputs": {
+            "model": [str(checkpoint_loader_id), 0],
+            "lora_name": _VIOLETS_LTX23_DMD_LORA,
+            "strength_model": 1.0,
+        },
+        "_meta": {"title": "Required Violets DMD LoRA (1.0 locked)"},
+    }
+    prompt[_VIOLETS_LTX23_JOYAI_NODE_ID] = {
+        "class_type": "LoraLoader",
+        "inputs": {
+            "model": [_VIOLETS_LTX23_DMD_NODE_ID, 0],
+            "clip": ["271:216", 0],
+            "lora_name": _VIOLETS_LTX23_JOYAI_LORA,
+            "strength_model": 0.5,
+            "strength_clip": 0.5,
+        },
+        "_meta": {"title": "Required Violets JoyAI LoRA (0.5 locked)"},
+    }
+
+
 def _patch_i2v_api_prompt(prompt, payload):
     prompt = copy.deepcopy(prompt)
     i2v_prompt = str(payload.get("i2v_prompt", "") or "").strip()
@@ -1372,12 +1501,16 @@ def _patch_i2v_api_prompt(prompt, payload):
     height = _int_payload(payload, "height", 1080, 64, 4096)
     seed = _int_payload(payload, "seed", 1, 0, 0xFFFFFFFFFFFFFFFF)
 
-    _patch_ltx_video_model_loader(prompt, payload)
-    _set_api_input(prompt, "271:256", "vae_name", str(payload.get("vae_name", "") or ""))
-    _set_api_input(prompt, "271:216", "clip_name1", str(payload.get("clip_name1", "") or ""))
-    _set_api_input(prompt, "271:216", "clip_name2", str(payload.get("clip_name2", "") or ""))
+    violets_ltx23_fp8 = _i2v_model_profile(payload) == _I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+    if violets_ltx23_fp8:
+        _patch_violets_ltx23_fp8_profile(prompt, payload)
+    else:
+        _patch_ltx_video_model_loader(prompt, payload)
+        _set_api_input(prompt, "271:256", "vae_name", str(payload.get("vae_name", "") or ""))
+        _set_api_input(prompt, "271:216", "clip_name1", str(payload.get("clip_name1", "") or ""))
+        _set_api_input(prompt, "271:216", "clip_name2", str(payload.get("clip_name2", "") or ""))
+        _set_api_input(prompt, "271:254", "vae_name", str(payload.get("audio_vae_name", "") or ""))
     _set_api_input(prompt, "271:211", "model_name", str(payload.get("upscale_model_name", "") or ""))
-    _set_api_input(prompt, "271:254", "vae_name", str(payload.get("audio_vae_name", "") or ""))
 
     _set_api_input(prompt, "736:424", "value", fps)
     _set_api_input(prompt, "736:425", "value", width)
@@ -3442,6 +3575,7 @@ def _ensure_workflow_runner_routes():
             "video_diffusion_models": video_diffusion_models,
             "vae": _folder_choices("vae"),
             "clip": _folder_choices(("clip", "text_encoders")),
+            "checkpoints": _folder_choices("checkpoints"),
             "upscale_models": _folder_choices("upscale_models"),
         })
 

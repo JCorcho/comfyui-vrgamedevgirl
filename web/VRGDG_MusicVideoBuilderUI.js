@@ -38,6 +38,10 @@ const BUILDER_UI_VERSION = "welcome-startup-2026-05-20";
 const HIDDEN_WIDGETS = new Set(["audio_path", "project_folder", "session_path", "srt_path"]);
 const DEFAULT_I2V_UNET = "LTX-2.3-22B-distilled-1.1-Q6_K.gguf";
 const DEFAULT_I2V_DIFFUSION_MODEL = "LTX_8bit\\ltx-2.3-22b-dev_transformer_only_int8_convrot.safetensors";
+const I2V_MODEL_PROFILE_DEFAULT = "repository_default";
+const I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 = "violets_ltx23_fp8";
+const DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT = "10Eros_v1.4_fp8mixed_learned.safetensors";
+const DEFAULT_VIOLETS_LTX23_TEXT_ENCODER = "gemma-3-12b-it-ablit-norms-biproj-fp8mixed.safetensors";
 const BAD_I2V_UNET_ALIASES = new Set(["LTX-2.3-22B-distilled-11-Q6_K.gguf"]);
 const REQUIRED_LTX_MSR_LORA = "licon\\LTX-2.3-Licon-MSR-V1.safetensors";
 const REQUIRED_LTX_INGREDIENTS_LORA = "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors";
@@ -3085,16 +3089,30 @@ function openBuilder(node) {
   const importCustomVideoPanel = makeSettingsPanel([
     importCustomVideoComingSoon,
   ]);
+  const i2vModelProfileSelect = makeSelect([
+    { value: I2V_MODEL_PROFILE_DEFAULT, label: "Repository Default (GGUF / diffusion model)" },
+    { value: I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8, label: "Violets LTX 2.3 FP8 (.safetensors)" },
+  ], I2V_MODEL_PROFILE_DEFAULT);
   const i2vUseGgufModel = makeCheckbox("Use GGUF model?", true);
   const i2vUnetPicker = makeSearchableLoraPicker("");
   const i2vDiffusionModelPicker = makeSearchableLoraPicker(DEFAULT_I2V_DIFFUSION_MODEL);
-  const i2vUnetModelField = makeField("Unet model", i2vUnetPicker.wrapper);
-  const i2vDiffusionModelField = makeField("Diffusion model", i2vDiffusionModelPicker.wrapper);
   const i2vVaePicker = makeSearchableLoraPicker("");
   const i2vClip1Picker = makeSearchableLoraPicker("");
   const i2vClip2Picker = makeSearchableLoraPicker("");
   const i2vUpscalePicker = makeSearchableLoraPicker("");
   const i2vAudioVaePicker = makeSearchableLoraPicker("");
+  const i2vVioletsCheckpointPicker = makeSearchableLoraPicker(DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
+  const i2vLtxAudioTextEncoderPicker = makeSearchableLoraPicker(DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
+  const i2vModelProfileField = makeField("I2V model profile", i2vModelProfileSelect);
+  const i2vUnetModelField = makeField("Unet model", i2vUnetPicker.wrapper);
+  const i2vDiffusionModelField = makeField("Diffusion model", i2vDiffusionModelPicker.wrapper);
+  const i2vVaeField = makeField("Video VAE", i2vVaePicker.wrapper);
+  const i2vClip1Field = makeField("Text encoder / Clip model 1", i2vClip1Picker.wrapper);
+  const i2vClip2Field = makeField("Clip model 2", i2vClip2Picker.wrapper);
+  const i2vUpscaleField = makeField("Latent upscaler", i2vUpscalePicker.wrapper);
+  const i2vAudioVaeField = makeField("Audio VAE", i2vAudioVaePicker.wrapper);
+  const i2vVioletsCheckpointField = makeField("LTX 2.3 FP8 checkpoint", i2vVioletsCheckpointPicker.wrapper);
+  const i2vLtxAudioTextEncoderField = makeField("LTXV Audio Text Encoder", i2vLtxAudioTextEncoderPicker.wrapper);
   const i2vFpsInput = makeInput("24", "number");
   const i2vWidthInput = makeInput("1920", "number");
   const i2vHeightInput = makeInput("1080", "number");
@@ -3111,6 +3129,16 @@ function openBuilder(node) {
   const i2vUseLora = makeCheckbox("Use video LoRAs?", false);
   const i2vLoraPanel = document.createElement("div");
   i2vLoraPanel.style.cssText = "display:none;flex-direction:column;gap:8px;";
+  const violetsLtxRequiredPanel = document.createElement("div");
+  violetsLtxRequiredPanel.style.cssText = "display:none;flex-direction:column;gap:7px;border:1px solid #0e7490;border-radius:7px;background:#083344;color:#cffafe;padding:9px 10px;font-size:11px;line-height:1.45;";
+  const violetsLtxRequiredTitle = document.createElement("div");
+  violetsLtxRequiredTitle.textContent = "Violets LTX 2.3 FP8 required LoRAs";
+  violetsLtxRequiredTitle.style.cssText = "font-weight:900;color:#67e8f9;";
+  const violetsLtxRequiredNote = document.createElement("div");
+  violetsLtxRequiredNote.textContent = "Always injected before the repository's two-pass pipeline: LTX2.3_DMD_reshaped_r256.safetensors at 1.00 and JoyAI-Echo-content_r256.safetensors at 0.50. Both values are locked for both passes; do not add either one again in optional Video LoRAs.";
+  const violetsLtxAudioTextEncoderNote = document.createElement("div");
+  violetsLtxAudioTextEncoderNote.textContent = "The selected LTXV Audio Text Encoder checkpoint is used by both the LTXV audio text encoder loader and audio VAE loader, matching the VioletsI2V loader arrangement.";
+  violetsLtxRequiredPanel.append(violetsLtxRequiredTitle, violetsLtxRequiredNote, violetsLtxAudioTextEncoderNote);
   const i2vLoraHintRow = document.createElement("div");
   i2vLoraHintRow.style.cssText = "display:flex;justify-content:flex-end;";
   const i2vLoraHintButton = makeButton("?", "neutral");
@@ -3967,15 +3995,19 @@ function openBuilder(node) {
         useSceneI2VVideoSettings.wrapper,
         useSceneI2VVideoSettingsNote,
         makeSettingsSection("Video Models", [
+          i2vModelProfileField,
           i2vUseGgufModel.wrapper,
           i2vUnetModelField,
           i2vDiffusionModelField,
-          makeField("Video VAE", i2vVaePicker.wrapper),
-          makeField("Clip model 1", i2vClip1Picker.wrapper),
-          makeField("Clip model 2", i2vClip2Picker.wrapper),
-          makeField("Latent upscaler", i2vUpscalePicker.wrapper),
-          makeField("Audio VAE", i2vAudioVaePicker.wrapper),
+          i2vVaeField,
+          i2vClip1Field,
+          i2vClip2Field,
+          i2vUpscaleField,
+          i2vAudioVaeField,
+          i2vVioletsCheckpointField,
+          i2vLtxAudioTextEncoderField,
         ]),
+        violetsLtxRequiredPanel,
         makeSettingsSection("Non-Vision LLM Models", [
           makeField("Non-Vision text Gemma model", i2vTextGemmaModelSelect),
         ]),
@@ -4453,6 +4485,7 @@ function openBuilder(node) {
 
   function defaultI2VVideoSettings() {
     return {
+      i2v_model_profile: I2V_MODEL_PROFILE_DEFAULT,
       use_gguf_model: true,
       unet_name: DEFAULT_I2V_UNET,
       diffusion_model_name: DEFAULT_I2V_DIFFUSION_MODEL,
@@ -4461,6 +4494,8 @@ function openBuilder(node) {
       clip_name2: "ltx-2.3_text_projection_bf16.safetensors",
       upscale_model_name: "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
       audio_vae_name: "LTX23_audio_vae_bf16.safetensors",
+      violets_ltx23_checkpoint_name: DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
+      ltx_audio_text_encoder_name: DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
       fps: 24,
       width: 1920,
       height: 1080,
@@ -7626,9 +7661,14 @@ function openBuilder(node) {
     return repairI2VVideoSettingDimensions({
       ...defaultI2VVideoSettings(),
       ...source,
+      i2v_model_profile: source.i2v_model_profile === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+        ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+        : I2V_MODEL_PROFILE_DEFAULT,
       use_gguf_model: source.use_gguf_model ?? source.useGgufModel ?? true,
       unet_name: BAD_I2V_UNET_ALIASES.has(source.unet_name) ? DEFAULT_I2V_UNET : source.unet_name || DEFAULT_I2V_UNET,
       diffusion_model_name: source.diffusion_model_name || source.model_name || DEFAULT_I2V_DIFFUSION_MODEL,
+      violets_ltx23_checkpoint_name: source.violets_ltx23_checkpoint_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
+      ltx_audio_text_encoder_name: source.ltx_audio_text_encoder_name || source.audio_text_encoder_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
       fps: Number(source.fps || 24),
       width: Number(source.width || 1920),
       height: Number(source.height || 1080),
@@ -12130,6 +12170,9 @@ function openBuilder(node) {
       : "This scene is using global video models, settings, and LoRAs. Enable custom scene video settings in the Models tab.";
     const settings = repairI2VVideoSettingDimensions(activeI2VVideoSettings() || {});
     videoTriggerInput.value = settings.video_trigger_phrase || "";
+    i2vModelProfileSelect.value = settings.i2v_model_profile === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+      ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+      : I2V_MODEL_PROFILE_DEFAULT;
     i2vUseGgufModel.input.checked = settings.use_gguf_model !== false;
     i2vUnetPicker.input.value = BAD_I2V_UNET_ALIASES.has(settings.unet_name) ? DEFAULT_I2V_UNET : settings.unet_name || "";
     i2vDiffusionModelPicker.input.value = settings.diffusion_model_name || DEFAULT_I2V_DIFFUSION_MODEL;
@@ -12138,6 +12181,8 @@ function openBuilder(node) {
     i2vClip2Picker.input.value = settings.clip_name2 || "";
     i2vUpscalePicker.input.value = settings.upscale_model_name || "";
     i2vAudioVaePicker.input.value = settings.audio_vae_name || "";
+    i2vVioletsCheckpointPicker.input.value = settings.violets_ltx23_checkpoint_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT;
+    i2vLtxAudioTextEncoderPicker.input.value = settings.ltx_audio_text_encoder_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT;
     const isIngredientsMode = currentVideoMode() === "ingredients";
     const regularWidth = Number(settings.width || 1920);
     const regularHeight = Number(settings.height || 1080);
@@ -12204,9 +12249,21 @@ function openBuilder(node) {
   }
 
   function syncI2VVideoModelPickerVisibility() {
+    const isI2VMode = currentVideoMode() === "i2v";
+    const violetsProfile = isI2VMode && i2vModelProfileSelect.value === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8;
     const useGguf = Boolean(i2vUseGgufModel.input.checked);
-    i2vUnetModelField.style.display = useGguf ? "flex" : "none";
-    i2vDiffusionModelField.style.display = useGguf ? "none" : "flex";
+    i2vModelProfileField.style.display = isI2VMode ? "flex" : "none";
+    i2vUseGgufModel.wrapper.style.display = violetsProfile ? "none" : "flex";
+    i2vUnetModelField.style.display = !violetsProfile && useGguf ? "flex" : "none";
+    i2vDiffusionModelField.style.display = !violetsProfile && !useGguf ? "flex" : "none";
+    i2vVaeField.style.display = violetsProfile ? "none" : "flex";
+    i2vClip1Field.style.display = "flex";
+    i2vClip2Field.style.display = violetsProfile ? "none" : "flex";
+    i2vUpscaleField.style.display = "flex";
+    i2vAudioVaeField.style.display = violetsProfile ? "none" : "flex";
+    i2vVioletsCheckpointField.style.display = violetsProfile ? "flex" : "none";
+    i2vLtxAudioTextEncoderField.style.display = violetsProfile ? "flex" : "none";
+    violetsLtxRequiredPanel.style.display = violetsProfile ? "flex" : "none";
   }
 
   function saveI2VVideoSettingsFromPanel() {
@@ -12238,6 +12295,9 @@ function openBuilder(node) {
     const pass2SamplerName = i2vPass2SamplerSelect.value || defaultSamplerForMode;
     const pass2Sigmas = normalizeI2VSigmasText(i2vPass2SigmasInput.value, DEFAULT_I2V_PASS2_SIGMAS);
     const settings = {
+      i2v_model_profile: isI2VMode
+        ? (i2vModelProfileSelect.value === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 : I2V_MODEL_PROFILE_DEFAULT)
+        : (previous.i2v_model_profile === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 : I2V_MODEL_PROFILE_DEFAULT),
       use_gguf_model: Boolean(i2vUseGgufModel.input.checked),
       unet_name: BAD_I2V_UNET_ALIASES.has(i2vUnetPicker.input.value) ? DEFAULT_I2V_UNET : i2vUnetPicker.input.value || "",
       diffusion_model_name: i2vDiffusionModelPicker.input.value || DEFAULT_I2V_DIFFUSION_MODEL,
@@ -12246,6 +12306,8 @@ function openBuilder(node) {
       clip_name2: i2vClip2Picker.input.value || "",
       upscale_model_name: i2vUpscalePicker.input.value || "",
       audio_vae_name: i2vAudioVaePicker.input.value || "",
+      violets_ltx23_checkpoint_name: i2vVioletsCheckpointPicker.input.value || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
+      ltx_audio_text_encoder_name: i2vLtxAudioTextEncoderPicker.input.value || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
       fps: Number(i2vFpsInput.value || 24),
       width: regularWidth,
       height: regularHeight,
@@ -30594,6 +30656,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       pass2Sigmas = settings.ingredients_pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS;
     }
     const payload = {
+      i2v_model_profile: settings.i2v_model_profile === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+        ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+        : I2V_MODEL_PROFILE_DEFAULT,
       use_gguf_model: settings.use_gguf_model !== false,
       unet_name: settings.unet_name || "",
       diffusion_model_name: settings.diffusion_model_name || DEFAULT_I2V_DIFFUSION_MODEL,
@@ -30602,6 +30667,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       clip_name2: settings.clip_name2 || "",
       upscale_model_name: settings.upscale_model_name || "",
       audio_vae_name: settings.audio_vae_name || "",
+      violets_ltx23_checkpoint_name: settings.violets_ltx23_checkpoint_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
+      ltx_audio_text_encoder_name: settings.ltx_audio_text_encoder_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT,
       fps: Number(settings.fps || 24),
       width: videoMode === "ingredients" ? Number(settings.ingredients_width || DEFAULT_LTX_INGREDIENTS_WIDTH) : Number(settings.width || 1920),
       height: videoMode === "ingredients" ? Number(settings.ingredients_height || DEFAULT_LTX_INGREDIENTS_HEIGHT) : Number(settings.height || 1080),
@@ -39040,6 +39107,11 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           }
         }
       }
+      if (settings.i2v_model_profile != null) {
+        i2vModelProfileSelect.value = settings.i2v_model_profile === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+          ? I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8
+          : I2V_MODEL_PROFILE_DEFAULT;
+      }
       if (settings.use_gguf_model != null) i2vUseGgufModel.input.checked = settings.use_gguf_model !== false;
       i2vUnetPicker.input.value = String(settings.unet_name || i2vUnetPicker.input.value || "");
       i2vDiffusionModelPicker.input.value = String(settings.diffusion_model_name || i2vDiffusionModelPicker.input.value || DEFAULT_I2V_DIFFUSION_MODEL);
@@ -39048,6 +39120,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       i2vClip2Picker.input.value = String(settings.clip_name2 || i2vClip2Picker.input.value || "");
       i2vUpscalePicker.input.value = String(settings.upscale_model_name || i2vUpscalePicker.input.value || "");
       i2vAudioVaePicker.input.value = String(settings.audio_vae_name || i2vAudioVaePicker.input.value || "");
+      i2vVioletsCheckpointPicker.input.value = String(settings.violets_ltx23_checkpoint_name || i2vVioletsCheckpointPicker.input.value || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
+      i2vLtxAudioTextEncoderPicker.input.value = String(settings.ltx_audio_text_encoder_name || i2vLtxAudioTextEncoderPicker.input.value || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
       i2vFpsInput.value = Number(settings.fps || i2vFpsInput.value || 24);
       i2vWidthInput.value = Number(settings.width || i2vWidthInput.value || 1920);
       i2vHeightInput.value = Number(settings.height || i2vHeightInput.value || 1080);
@@ -41155,6 +41229,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     setOptions(i2vClip2Picker, data.clip, "ltx-2.3_text_projection_bf16.safetensors");
     setOptions(i2vUpscalePicker, data.upscale_models, "ltx-2.3-spatial-upscaler-x2-1.1.safetensors");
     setOptions(i2vAudioVaePicker, data.vae, "LTX23_audio_vae_bf16.safetensors");
+    setOptions(i2vVioletsCheckpointPicker, data.checkpoints, DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
+    setOptions(i2vLtxAudioTextEncoderPicker, data.checkpoints, DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT);
     setOptions(fluxUnetPicker, data.unets, ["flux\\flux-2-klein-4b-fp8.safetensors", "flux-2-klein-4b-fp8.safetensors"]);
     setOptions(fluxClipPicker, data.clip, ["qwen_3_4b.safetensors", "flux\\qwen_3_4b.safetensors"]);
     setOptions(fluxVaePicker, data.vae, ["flux\\flux2-vae.safetensors", "flux2-vae.safetensors"]);
@@ -41270,7 +41346,17 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     syncI2VVideoModelPickerVisibility();
     saveI2VVideoSettingsFromPanel();
   });
-  for (const picker of [i2vUnetPicker, i2vDiffusionModelPicker, i2vVaePicker, i2vClip1Picker, i2vClip2Picker, i2vUpscalePicker, i2vAudioVaePicker]) {
+  i2vModelProfileSelect.addEventListener("change", () => {
+    if (i2vModelProfileSelect.value === I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8) {
+      i2vUseGgufModel.input.checked = false;
+      i2vVioletsCheckpointPicker.input.value = DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT;
+      i2vLtxAudioTextEncoderPicker.input.value = DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT;
+      i2vClip1Picker.input.value = DEFAULT_VIOLETS_LTX23_TEXT_ENCODER;
+    }
+    syncI2VVideoModelPickerVisibility();
+    saveI2VVideoSettingsFromPanel();
+  });
+  for (const picker of [i2vUnetPicker, i2vDiffusionModelPicker, i2vVaePicker, i2vClip1Picker, i2vClip2Picker, i2vUpscalePicker, i2vAudioVaePicker, i2vVioletsCheckpointPicker, i2vLtxAudioTextEncoderPicker]) {
     wireSearchablePicker(picker, saveI2VVideoSettingsFromPanel);
     picker.input.addEventListener("change", saveI2VVideoSettingsFromPanel);
   }
