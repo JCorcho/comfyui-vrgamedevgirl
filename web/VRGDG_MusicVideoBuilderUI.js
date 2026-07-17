@@ -2884,6 +2884,7 @@ function openBuilder(node) {
   ponyPrompt.placeholder = "Pony T2I prompt...";
   ponyPrompt.style.cssText = "width:100%;box-sizing:border-box;min-height:132px;resize:vertical;border:1px solid #3f3f46;border-radius:6px;background:#18181b;color:#fafafa;padding:9px;font-size:12px;line-height:1.45;";
   const ponyGemmaButton = makeButton("Gemma T2I", "primary");
+  const editPonyT2IInstructionsButton = makeButton("Edit Pony Prompt Instructions");
   const fluxKleinModePanel = document.createElement("div");
   fluxKleinModePanel.style.cssText = "display:none;flex-direction:column;gap:10px;";
   const ernieImageModePanel = document.createElement("div");
@@ -3623,6 +3624,7 @@ function openBuilder(node) {
     ponyWorkflowNotice,
     makeField("T2I prompt", ponyPrompt),
     ponyGemmaButton,
+    editPonyT2IInstructionsButton,
     makePonyCreateButton(),
   ]));
   fluxKleinModePanel.append(fluxKleinPanel);
@@ -28022,7 +28024,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
 
   function builderImageInstructionKey(imageMode) {
     if (imageMode === "zimage") return "zimage_t2i";
-    if (imageMode === "pony") return "zimage_t2i";
+    if (imageMode === "pony") return "pony_t2i";
     if (imageMode === "ernie_image") return "ernie_t2i";
     if (imageMode === "krea2_2pass") return "krea2_t2i";
     if (imageMode === "flux_klein") return "flux_klein_t2i";
@@ -40417,6 +40419,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   for (const button of zCreateButtons) button.onclick = previewZImage;
   for (const button of ponyCreateButtons) button.onclick = previewPonyImage;
   ponyGemmaButton.onclick = createT2IPromptWithGemma;
+  editPonyT2IInstructionsButton.onclick = () => openBuilderInstructionEditor("pony_t2i");
   ponyPrompt.addEventListener("input", () => {
     const segment = activeSegment();
     if (!segment) return;

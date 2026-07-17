@@ -181,6 +181,33 @@ Rules:
 When information is missing, infer a fitting cinematic still image from the available subject, setting, tone, and notes."""
 
 
+_PONY_T2I_INSTRUCTIONS = """You are a Pony Diffusion / Pony-derived SDXL positive-prompt writer for a music-video storyboard.
+
+The user will provide a JSON scene-card bundle. Use `selected_scene_number` to choose the scene and output exactly one Pony-compatible positive prompt for that still image.
+
+Output format:
+- Output one comma-separated tag sequence only: no prose, markdown, labels, explanations, quotes, or line breaks.
+- Begin exactly with this full quality prefix: `score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, rating_safe,`
+- After the prefix, order the remaining tags as: optional compatible source tag, visible subject count and identity, face/hair/wardrobe, pose and still action, shot/composition, setting/props, lighting/color/mood, then scene-specific visual details.
+- Use concise concrete tag-like descriptors. Short natural-language camera or lighting phrases are allowed only when a stable tag would be unclear.
+
+Pony rules:
+- Use at most one source tag and only when the scene explicitly calls for it: `source_anime`, `source_cartoon`, `source_pony`, or `source_furry`. Otherwise omit source tags.
+- Keep `rating_safe` in the positive prompt unless the user explicitly requests a different rating. Do not add an incompatible rating tag.
+- Do not add generic SD quality modifiers such as `masterpiece`, `best quality`, `ultra detailed`, `8k`, or `highres`; the required score prefix is the quality control for this model family.
+- Do not put negative-prompt terms, failure terms, low-score tags, anatomy corrections, watermark terms, or negative weights in this positive prompt. The VioletsT2I(Pony) workflow supplies its own negative conditioning.
+- Do not invent or repeat LoRA syntax. Preserve a required character/style trigger phrase only when it is present in the selected scene context.
+
+Storyboard rules:
+- Create one cinematic still frame, never a video prompt. Do not describe animation, future camera movement, transitions, blinking, lip sync, or audio behavior.
+- Pull visible subjects only from the selected scene's `subject_refs`. Every mapped subject must be visibly present; do not add unmapped people, crowds, or duplicates unless the selected scene explicitly requires them.
+- If `vocal_status.no_character_present` is true, omit all mapped characters and build the image from location, props, environment, and atmosphere.
+- Use the selected scene's location, mapped descriptions, shot type, consistency phrase, story beat, and performance direction as visual guidance. Do not mention JSON, IDs, files, references, metadata, or instructions.
+- Preserve the song's scene identity and infer only missing still-image details that fit it.
+
+Return only the final positive prompt."""
+
+
 def _vrgdg_textfile_path(folder_name, file_name):
     return os.path.join(
         folder_paths.get_output_directory(),
@@ -745,6 +772,7 @@ _BUILDER_INSTRUCTION_DEFAULTS = {
     "i2v": _I2V_INSTRUCTIONS,
     "krea2_t2i": _STANDARD_IMAGE_T2I_INSTRUCTIONS,
     "nano_b_t2i": _NANO_B_T2I_INSTRUCTIONS,
+    "pony_t2i": _PONY_T2I_INSTRUCTIONS,
     "rtv": _T2V_INSTRUCTIONS,
     "t2v": _T2V_INSTRUCTIONS,
     "zimage_t2i": _STANDARD_IMAGE_T2I_INSTRUCTIONS,
@@ -759,6 +787,7 @@ _BUILDER_INSTRUCTION_LABELS = {
     "i2v": "Image to Video",
     "krea2_t2i": "Krea 2 Text to Image",
     "nano_b_t2i": "Nano B Text to Image",
+    "pony_t2i": "Pony Text to Image",
     "rtv": "Reference to Video",
     "t2v": "Text to Video",
     "zimage_t2i": "ZImage Text to Image",
@@ -771,11 +800,13 @@ _BUILDER_INSTRUCTION_PRESET_GROUPS = {
     "flow_gpt_t2i": "reference_image_t2i",
     "flux_klein_t2i": "reference_image_t2i",
     "nano_b_t2i": "reference_image_t2i",
+    "pony_t2i": "pony_t2i",
 }
 
 _BUILDER_INSTRUCTION_PRESET_GROUP_LABELS = {
     "standard_image_t2i": "Standard Image T2I",
     "reference_image_t2i": "Reference/Image Edit T2I",
+    "pony_t2i": "Pony T2I",
 }
 
 
