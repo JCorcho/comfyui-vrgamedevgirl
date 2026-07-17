@@ -1013,6 +1013,7 @@ export function openMusicVideoWizard(api = {}) {
     const isReferenceToVideo = String(data.videoMode || "i2v") === "rtv";
     const imageModeOptions = data.imageModeOptions?.length ? data.imageModeOptions : [
       { value: "zimage", label: "ZImage" },
+      { value: "pony", label: "Pony" },
       { value: "flux_klein", label: "Flux Klein" },
       { value: "ernie_image", label: "Ernie Image" },
       { value: "krea2_2pass", label: "Krea 2" },
@@ -1032,11 +1033,14 @@ export function openMusicVideoWizard(api = {}) {
     const imageSettings = data.imageSettings?.[imageMode] || {};
     const imageModelOptions = data.imageModelOptions?.[imageMode] || {};
     const imageModelCard = el("div", "vrgdg-wizard-settings-card span-8");
+    const isPony = imageMode === "pony";
     const isFlowGpt = imageMode === "flow_gpt";
     const isNanoBanana = imageMode === "nano_banana";
     imageModelCard.append(
-      el("div", "vrgdg-wizard-settings-title", isFlowGpt ? "Flow/GPT Browser Settings" : isNanoBanana ? "NanoBanana Settings" : `${data.imageModeLabel || "Image"} Model Stack`),
-      el("div", "vrgdg-wizard-settings-subtitle", isFlowGpt
+      el("div", "vrgdg-wizard-settings-title", isPony ? "Pony / VioletsT2I Workflow" : isFlowGpt ? "Flow/GPT Browser Settings" : isNanoBanana ? "NanoBanana Settings" : `${data.imageModeLabel || "Image"} Model Stack`),
+      el("div", "vrgdg-wizard-settings-subtitle", isPony
+        ? "Uses the saved VioletsT2I(Pony) workflow. Its model, sampler, LoRA, and resolution settings remain managed by that workflow."
+        : isFlowGpt
         ? "Flow/GPT uses the Browser Image provider and login/settings from the main side panel."
         : isNanoBanana
         ? "NanoBanana uses API settings and reference images from the NanoBanana side panel."
@@ -1199,7 +1203,11 @@ export function openMusicVideoWizard(api = {}) {
     flowGptManualExportButton.onclick = () => runManualFlowGptAction(flowGptManualExportButton, "Exporting scene refs", () => api.exportFlowGptManualRefs?.());
     flowGptManualArmButton.onclick = () => runManualFlowGptAction(flowGptManualArmButton, "Arming download import", () => api.armFlowGptManualDownloadImport?.());
     flowGptManualLatestButton.onclick = () => runManualFlowGptAction(flowGptManualLatestButton, "Importing latest download", () => api.importLatestFlowGptManualDownload?.());
-    if (isFlowGpt) {
+    if (isPony) {
+      imageGrid.append(
+        settingField("Workflow source", el("div", "vrgdg-wizard-copy", "VioletsT2I(Pony).json"), "The workflow is resolved and validated when Pony image generation starts."),
+      );
+    } else if (isFlowGpt) {
       imageGrid.append(
         settingField("Provider", flowGptProvider, "Browser image provider used for Flow/GPT scenes."),
         settingField("Aspect ratio", flowGptAspectRatio, "GPT Image appends this ratio to prompts. Flow uses the ratio you set in Flow."),
@@ -1224,7 +1232,7 @@ export function openMusicVideoWizard(api = {}) {
         settingField("Image VAE", imageVae.input, "Image decoder/encoder for this image mode."),
       );
     }
-    if (isFlowGpt || isNanoBanana) {
+    if (isPony || isFlowGpt || isNanoBanana) {
       imageModelCard.append(imageGrid);
     } else {
       imageModelCard.append(imageUnet.list, imageClip.list, imageVae.list, imageGrid);
@@ -1387,7 +1395,9 @@ export function openMusicVideoWizard(api = {}) {
             msr_first_pass_strength: Number(msrStrength.value || 1),
           } : {}),
           image_model_mode: imageModeSelect.value,
-          image_settings: imageModeSelect.value === "nano_banana"
+          image_settings: imageModeSelect.value === "pony"
+            ? {}
+            : imageModeSelect.value === "nano_banana"
             ? {
               api_key: nanoApiKey.value,
               model: nanoModel.value,
