@@ -2930,6 +2930,45 @@ function openBuilder(node) {
   const i2vTextGemmaModelSelect = makeSelect([""], "");
   const i2vGemmaModelSelect = makeSelect([""], "");
   const i2vMmprojSelect = makeSelect([""], "");
+  const textGemmaModelSelects = [t2iTextGemmaModelSelect, ernieTextGemmaModelSelect, i2vTextGemmaModelSelect];
+  const visionGemmaModelSelects = [gemmaModelSelect, ernieGemmaModelSelect, zEnhanceGemmaModelSelect, i2vGemmaModelSelect, fluxGemmaModelSelect, nbGemmaModelSelect];
+  const gemmaMmprojSelects = [mmprojSelect, ernieMmprojSelect, zEnhanceMmprojSelect, i2vMmprojSelect, fluxMmprojSelect, nbMmprojSelect];
+  const hasSelectChoice = (select, value) => Array.from(select.options || []).some((option) => option.value === value);
+  const firstAvailableChoice = (choices, candidates, fallback = "") => {
+    const available = Array.isArray(choices) ? choices : [];
+    for (const candidate of candidates || []) {
+      const value = String(candidate || "").trim();
+      if (value && available.includes(value)) return value;
+    }
+    return String(fallback || "").trim();
+  };
+  function setSharedTextGemmaModel(value) {
+    const selected = String(value || "").trim();
+    state.textGemmaModel = selected;
+    for (const select of textGemmaModelSelects) {
+      if (selected && hasSelectChoice(select, selected)) select.value = selected;
+    }
+    syncKrea2TwoPassLlmSelectsFromShared();
+    return selected;
+  }
+  function setSharedVisionGemmaModel(value) {
+    const selected = String(value || "").trim();
+    state.visionGemmaModel = selected;
+    for (const select of visionGemmaModelSelects) {
+      if (selected && hasSelectChoice(select, selected)) select.value = selected;
+    }
+    syncKrea2TwoPassLlmSelectsFromShared();
+    return selected;
+  }
+  function setSharedGemmaMmproj(value) {
+    const selected = String(value || "").trim();
+    state.gemmaMmprojFile = selected;
+    for (const select of gemmaMmprojSelects) {
+      if (selected && hasSelectChoice(select, selected)) select.value = selected;
+    }
+    syncKrea2TwoPassLlmSelectsFromShared();
+    return selected;
+  }
   function copySelectOptions(sourceSelect, targetSelect) {
     targetSelect.textContent = "";
     for (const option of sourceSelect.options) {
@@ -2943,16 +2982,16 @@ function openBuilder(node) {
     copySelectOptions(mmprojSelect, krea2TwoPassMmprojSelect);
   }
   function syncKrea2TwoPassLlmSelectsToShared() {
-    t2iTextGemmaModelSelect.value = krea2TwoPassTextGemmaModelSelect.value || "";
-    gemmaModelSelect.value = krea2TwoPassGemmaModelSelect.value || "";
-    mmprojSelect.value = krea2TwoPassMmprojSelect.value || "";
+    setSharedTextGemmaModel(krea2TwoPassTextGemmaModelSelect.value || "");
+    setSharedVisionGemmaModel(krea2TwoPassGemmaModelSelect.value || "");
+    setSharedGemmaMmproj(krea2TwoPassMmprojSelect.value || "");
   }
   for (const select of [krea2TwoPassTextGemmaModelSelect, krea2TwoPassGemmaModelSelect, krea2TwoPassMmprojSelect]) {
     select.addEventListener("change", syncKrea2TwoPassLlmSelectsToShared);
   }
-  for (const select of [t2iTextGemmaModelSelect, gemmaModelSelect, mmprojSelect]) {
-    select.addEventListener("change", syncKrea2TwoPassLlmSelectsFromShared);
-  }
+  for (const select of textGemmaModelSelects) select.addEventListener("change", () => setSharedTextGemmaModel(select.value));
+  for (const select of visionGemmaModelSelects) select.addEventListener("change", () => setSharedVisionGemmaModel(select.value));
+  for (const select of gemmaMmprojSelects) select.addEventListener("change", () => setSharedGemmaMmproj(select.value));
   const useVisionReference = makeCheckbox("Use vision reference image?", false);
   const useI2VVisionReference = makeCheckbox("Use image reference for I2V prompt?", true);
   const useI2VPromptEnhancementPass = makeCheckbox("I2V prompt enhancement pass", false);
@@ -4694,6 +4733,9 @@ function openBuilder(node) {
     storyIdeaPath: "",
     subjectScenePath: "",
     textGemmaRunner: "builtin",
+    textGemmaModel: "",
+    visionGemmaModel: "",
+    gemmaMmprojFile: "",
     gemmaContextLimit: 8000,
     gemmaGpuLayers: 99,
     lmStudioBaseUrl: "http://127.0.0.1:1234/v1",
@@ -27056,6 +27098,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       story_idea_path: state.storyIdeaPath,
       subject_scene_path: state.subjectScenePath,
       text_gemma_runner: state.textGemmaRunner || "builtin",
+      text_gemma_model: state.textGemmaModel || t2iTextGemmaModelSelect.value || i2vTextGemmaModelSelect.value || "",
+      vision_gemma_model: state.visionGemmaModel || gemmaModelSelect.value || i2vGemmaModelSelect.value || "",
+      mmproj_file: state.gemmaMmprojFile || mmprojSelect.value || i2vMmprojSelect.value || "",
       gemma_context_limit: normalizeGemmaContextLimit(state.gemmaContextLimit),
       gemma_gpu_layers: normalizeGemmaGpuLayers(state.gemmaGpuLayers),
       lm_studio_base_url: state.lmStudioBaseUrl || "http://127.0.0.1:1234/v1",
@@ -27622,6 +27667,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       state.builderStoryLayer = normalizeBuilderStoryLayer(session.builder_story_layer || {});
       state.builderStoryboardDefaults = normalizeBuilderStoryboardDefaults(session.builder_storyboard_defaults || session.builderStoryboardDefaults || {});
       state.textGemmaRunner = session.text_gemma_runner || state.textGemmaRunner || "builtin";
+      if (String(session.text_gemma_model || "").trim()) setSharedTextGemmaModel(session.text_gemma_model);
+      if (String(session.vision_gemma_model || "").trim()) setSharedVisionGemmaModel(session.vision_gemma_model);
+      if (String(session.mmproj_file || "").trim()) setSharedGemmaMmproj(session.mmproj_file);
       state.gemmaContextLimit = normalizeGemmaContextLimit(session.gemma_context_limit ?? session.n_ctx ?? state.gemmaContextLimit);
       state.gemmaGpuLayers = normalizeGemmaGpuLayers(session.gemma_gpu_layers ?? session.n_gpu_layers ?? state.gemmaGpuLayers);
       state.lmStudioBaseUrl = session.lm_studio_base_url || state.lmStudioBaseUrl || "http://127.0.0.1:1234/v1";
@@ -35789,7 +35837,17 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     }
     creator.open({
       projectFolder: projectInput.value || state.projectFolder || "",
+      textGemmaModel: state.textGemmaModel || t2iTextGemmaModelSelect.value || i2vTextGemmaModelSelect.value || "",
+      onTextGemmaModelChange: (model) => {
+        if (!String(model || "").trim()) return;
+        setSharedTextGemmaModel(model);
+        autoSaveSessionQuiet("Prompt Creator text model selection").catch(() => {});
+      },
       onSaved: (result) => {
+        if (String(result?.text_gemma_model || "").trim()) {
+          setSharedTextGemmaModel(result.text_gemma_model);
+          autoSaveSessionQuiet("Prompt Creator text model updated").catch(() => {});
+        }
         if (result?.project_folder) {
           projectInput.value = result.project_folder;
           state.projectFolder = result.project_folder;
@@ -39144,16 +39202,13 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         slot.secondPassStrength.value = 0;
       });
       if (String(settings.text_gemma_model || "").trim()) {
-        t2iTextGemmaModelSelect.value = settings.text_gemma_model;
-        i2vTextGemmaModelSelect.value = settings.text_gemma_model;
+        setSharedTextGemmaModel(settings.text_gemma_model);
       }
       if (String(settings.vision_gemma_model || "").trim()) {
-        gemmaModelSelect.value = settings.vision_gemma_model;
-        i2vGemmaModelSelect.value = settings.vision_gemma_model;
+        setSharedVisionGemmaModel(settings.vision_gemma_model);
       }
       if (String(settings.mmproj_file || "").trim()) {
-        mmprojSelect.value = settings.mmproj_file;
-        i2vMmprojSelect.value = settings.mmproj_file;
+        setSharedGemmaMmproj(settings.mmproj_file);
       }
       syncKrea2TwoPassLlmSelectsFromShared();
       syncI2VVideoModelPickerVisibility();
@@ -41019,7 +41074,10 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     const mmproj = data.mmproj || [];
     const validMmproj = mmproj.filter((item) => item && !/^\[No mmproj/i.test(item));
     const singleMmproj = validMmproj.length === 1 ? validMmproj[0] : "";
-    for (const select of [t2iTextGemmaModelSelect, gemmaModelSelect, ernieTextGemmaModelSelect, ernieGemmaModelSelect, zEnhanceGemmaModelSelect, i2vTextGemmaModelSelect, i2vGemmaModelSelect, fluxGemmaModelSelect, nbGemmaModelSelect]) {
+    const previousTextModels = textGemmaModelSelects.map((select) => select.value);
+    const previousVisionModels = visionGemmaModelSelects.map((select) => select.value);
+    const previousMmproj = gemmaMmprojSelects.map((select) => select.value);
+    for (const select of [...textGemmaModelSelects, ...visionGemmaModelSelects]) {
       select.textContent = "";
       for (const model of models) {
         const option = document.createElement("option");
@@ -41032,13 +41090,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       || models.find((model) => /supergemma4.*fast.*q4_k_m/i.test(model))
       || models.find((model) => /supergemma/i.test(model))
       || "";
-    if (preferredNonVision) {
-      for (const select of [t2iTextGemmaModelSelect, ernieTextGemmaModelSelect, i2vTextGemmaModelSelect]) {
-        select.value = preferredNonVision;
-      }
-    }
-    for (const select of [mmprojSelect, ernieMmprojSelect, zEnhanceMmprojSelect, i2vMmprojSelect, fluxMmprojSelect, nbMmprojSelect]) {
-      const previousValue = select.value;
+    setSharedTextGemmaModel(firstAvailableChoice(models, [state.textGemmaModel, ...previousTextModels], preferredNonVision));
+    setSharedVisionGemmaModel(firstAvailableChoice(models, [state.visionGemmaModel, ...previousVisionModels], models[0] || ""));
+    for (const select of gemmaMmprojSelects) {
       select.textContent = "";
       for (const item of mmproj) {
         const option = document.createElement("option");
@@ -41046,12 +41100,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         option.textContent = item;
         select.append(option);
       }
-      if (previousValue && mmproj.includes(previousValue)) {
-        select.value = previousValue;
-      } else if (singleMmproj) {
-        select.value = singleMmproj;
-      }
     }
+    setSharedGemmaMmproj(firstAvailableChoice(validMmproj, [state.gemmaMmprojFile, ...previousMmproj], singleMmproj || validMmproj[0] || ""));
     syncKrea2TwoPassLlmSelectsFromShared();
   }
 

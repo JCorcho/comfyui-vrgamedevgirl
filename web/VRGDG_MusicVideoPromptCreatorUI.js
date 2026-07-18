@@ -577,6 +577,7 @@ function buildPayload(controls, modelSelect) {
     append_subject_to_prompts: controls.appendSubjectToPrompts.checked,
     repair_lyric_segments: controls.repairLyricSegments.checked,
     model_file: modelSelect.value,
+    text_gemma_model: modelSelect.value,
     whisper_segments: controls.whisperSegments.value,
     full_lyrics: controls.fullLyrics.value,
     style_theme: controls.styleTheme.value,
@@ -702,6 +703,7 @@ function openPromptCreator(options = {}) {
     conceptPrompts: {},
     i2vMotionNotes: {},
     extractedSubject: "",
+    textGemmaModel: String(options.textGemmaModel || "").trim(),
     textGemmaRunner: "builtin",
     lmStudioBaseUrl: "http://127.0.0.1:1234/v1",
     lmStudioModel: "",
@@ -713,7 +715,9 @@ function openPromptCreator(options = {}) {
   };
 
   function gemmaRunnerLine() {
-    return `Runner: ${state.textGemmaRunner === "llm_api" ? "LLM API" : state.textGemmaRunner === "lm_studio" ? "LM Studio" : "Gemma Local"}`;
+    const runner = state.textGemmaRunner === "llm_api" ? "LLM API" : state.textGemmaRunner === "lm_studio" ? "LM Studio" : "Local GGUF";
+    const selectedModel = String(modelSelect?.value || state.textGemmaModel || "").trim();
+    return `Runner: ${runner}${state.textGemmaRunner === "builtin" && selectedModel ? `\nSelected model: ${selectedModel}` : ""}`;
   }
 
   const instructionLabels = {
@@ -913,8 +917,12 @@ function openPromptCreator(options = {}) {
     makeField("Numbered Whisper segments preview", whisperSegments, "Shown for review only. Downstream uses ConceptPrompts and the extracted subject."),
   );
 
-  const modelPanel = makePanel("Gemma Settings");
+  const modelPanel = makePanel("Text LLM Settings");
   const modelSelect = makeSelect(["Loading models..."]);
+  function publishSelectedTextModel() {
+    state.textGemmaModel = String(modelSelect.value || "").trim();
+    options.onTextGemmaModelChange?.(state.textGemmaModel);
+  }
   const conceptMatchDescriptions = {
     super_tight_literal: "Super tight and literal: use the lyric's exact visible objects and actions whenever possible.",
     medium: "Medium: keep at least one recognizable lyric object or action while still following story and style.",
@@ -949,8 +957,11 @@ function openPromptCreator(options = {}) {
   setupControls.push(conceptMatchField);
   setupGrid.append(conceptMatchField);
   modelPanel.append(
-    makeField("Gemma4 text model", modelSelect),
+    makeField("Local GGUF text model", modelSelect),
   );
+  modelSelect.addEventListener("change", () => {
+    publishSelectedTextModel();
+  });
 
   function syncRunnerControls() {
     controls.textGemmaRunner = state.textGemmaRunner;
@@ -1498,7 +1509,9 @@ function openPromptCreator(options = {}) {
         modelSelect.append(option);
       }
       const preferred = models.find((item) => /supergemma4.*q4_k_m/i.test(item)) || models[0];
-      modelSelect.value = preferred;
+      const requested = [state.textGemmaModel, modelSelect.value].map((value) => String(value || "").trim()).find((value) => value && models.includes(value));
+      modelSelect.value = requested || preferred;
+      publishSelectedTextModel();
     } catch (error) {
       modelSelect.replaceChildren();
       const option = document.createElement("option");
@@ -1538,6 +1551,12 @@ function openPromptCreator(options = {}) {
     state.conceptPrompts = parseJsonSafe(conceptOutput.value, {});
     state.i2vMotionNotes = parseJsonSafe(i2vMotionOutput.value, {});
     state.extractedSubject = subjectOutput.value || "";
+    const draftModel = String(draft.text_gemma_model || draft.model_file || "").trim();
+    if (draftModel) {
+      state.textGemmaModel = draftModel;
+      if (Array.from(modelSelect.options || []).some((option) => option.value === draftModel)) modelSelect.value = draftModel;
+      publishSelectedTextModel();
+    }
     state.textGemmaRunner = draft.text_gemma_runner || draft.text_runner || draft.textGemmaRunner || state.textGemmaRunner || "builtin";
     state.lmStudioBaseUrl = draft.lm_studio_base_url || draft.lmstudio_base_url || draft.lmStudioBaseUrl || state.lmStudioBaseUrl || "http://127.0.0.1:1234/v1";
     state.lmStudioModel = draft.lm_studio_model || draft.lmstudio_model || draft.lmStudioModel || state.lmStudioModel || "";
@@ -1856,10 +1875,11 @@ function openPromptCreator(options = {}) {
     }
     state.extractedSubject = payload.subject || "";
     const result = await postJson("/vrgdg/music_prompt_creator/save_outputs", payload);
-    projectFolder.value = result.project_folder || projectFolder.value;
-    setStatus(status, `Saved prompt creator files.\n${result.project_folder}`);
-    options.onSaved?.(result);
-    return result;
+    const resultWithModel = { ...result, text_gemma_model: String(modelSelect.value || state.textGemmaModel || "").trim() };
+    projectFolder.value = resultWithModel.project_folder || projectFolder.value;
+    setStatus(status, `Saved prompt creator files.\n${resultWithModel.project_folder}`);
+    options.onSaved?.(resultWithModel);
+    return resultWithModel;
   }
 
   async function sendToVideoCreator() {

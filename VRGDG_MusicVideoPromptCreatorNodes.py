@@ -931,6 +931,8 @@ def _run_text_gemma(model_file, prompt, overrides=None, payload=None):
     if not str(model_file or "").strip():
         raise ValueError("Choose a Gemma4 text model first.")
 
+    print(f"[VRGDG Prompt Creator] selected local text GGUF: {str(model_file).strip()}")
+
     settings = dict(_LLM_SETTINGS)
     if isinstance(overrides, dict):
         settings.update({key: value for key, value in overrides.items() if value not in (None, "")})
@@ -996,6 +998,8 @@ def _run_text_gemma_custom(model_file, custom_instructions, user_input, override
 
     if not str(model_file or "").strip():
         raise ValueError("Choose a Gemma4 text model first.")
+
+    print(f"[VRGDG Prompt Creator] selected local text GGUF: {str(model_file).strip()}")
 
     settings = dict(_LLM_SETTINGS)
     if isinstance(overrides, dict):
@@ -1475,6 +1479,7 @@ def _save_prompt_creator_draft(payload):
         "concept_match_mode": str(payload.get("concept_match_mode", "medium") or "medium"),
         "append_subject_to_prompts": _payload_bool(payload.get("append_subject_to_prompts", True), True),
         "repair_lyric_segments": _payload_bool(payload.get("repair_lyric_segments", False), False),
+        "text_gemma_model": str(payload.get("text_gemma_model") or payload.get("model_file") or ""),
         "text_gemma_runner": str(payload.get("text_gemma_runner") or payload.get("text_runner") or "builtin"),
         "lm_studio_base_url": str(payload.get("lm_studio_base_url") or payload.get("lmstudio_base_url") or "http://127.0.0.1:1234/v1"),
         "lm_studio_model": str(payload.get("lm_studio_model") or payload.get("lmstudio_model") or ""),

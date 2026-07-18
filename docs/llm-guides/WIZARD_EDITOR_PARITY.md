@@ -25,6 +25,7 @@ Treat the normal Builder editor and the Video Wizard as two views of the same pr
 | Feature | Persisted fields / route |
 | --- | --- |
 | Pony T2I | `image_model_mode: "pony"`; the Builder's normal image stage calls `VioletsT2I(Pony).json` through `/violets_t2i/build_prompt`. |
+| Local text LLM selection | `text_gemma_model`, `vision_gemma_model`, and `mmproj_file`; Editor and Wizard use the shared setters in `VRGDG_MusicVideoBuilderUI.js`, and Prompt Creator persists `text_gemma_model` in its draft. See `PROMPT_CREATOR_LLM_SELECTION.md`. |
 | Violets LTX 2.3 FP8 | `i2v_model_profile`, `violets_ltx23_checkpoint_name`, `ltx_audio_text_encoder_name`; backend injects DMD `1.0` and JoyAI `0.5`. |
 | Two-pass I2V sampling | `pass1_sampler_name`, `pass1_sigmas`, `pass2_sampler_name`, `pass2_sigmas`. |
 

@@ -3633,7 +3633,8 @@ class VRGDG_SuperGemmaGGUFChat(VRGDG_GeneralGGUF):
         return paths
 
     @classmethod
-    def _list_local_gemma_gguf_choices(cls) -> list[str]:
+    def _list_local_text_gguf_choices(cls) -> list[str]:
+        """Return every local text-generation GGUF, independent of its filename."""
         roots = cls._supergemma_models_root()
         found = []
 
@@ -3651,9 +3652,6 @@ class VRGDG_SuperGemmaGGUFChat(VRGDG_GeneralGGUF):
                     if "mmproj" in low:
                         continue
 
-                    if "gemma" not in low:
-                        continue
-
                     full_path = os.path.join(dirpath, filename)
 
                     rel_path = os.path.relpath(full_path, root)
@@ -3663,6 +3661,11 @@ class VRGDG_SuperGemmaGGUFChat(VRGDG_GeneralGGUF):
         found = sorted(set(found), key=str.lower)
 
         return found or [cls.MISSING_MODEL_OPTION]
+
+    @classmethod
+    def _list_local_gemma_gguf_choices(cls) -> list[str]:
+        """Backward-compatible alias for callers that still use the old name."""
+        return cls._list_local_text_gguf_choices()
 
     @classmethod
     def _list_local_mmproj_choices(cls) -> list[str]:
@@ -3727,14 +3730,14 @@ class VRGDG_SuperGemmaGGUFChat(VRGDG_GeneralGGUF):
 
     @classmethod
     def INPUT_TYPES(cls):
-        gemma_choices = cls._list_local_gemma_gguf_choices()
+        gemma_choices = cls._list_local_text_gguf_choices()
         mmproj_choices = cls._list_local_mmproj_choices()
         required = {
             "model_file": (
                 gemma_choices,
                 {
                     "default": gemma_choices[0],
-                    "tooltip": "Gemma GGUF models found under ComfyUI/models/LLM. Only .gguf files with 'gemma' in the name are shown.",
+                    "tooltip": "Text-generation GGUF models found under ComfyUI/models/LLM. All non-mmproj .gguf files are shown.",
                 },
             ),
             "mmproj_file": (

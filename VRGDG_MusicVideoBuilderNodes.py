@@ -3197,6 +3197,7 @@ def _run_builder_text_llm(payload, instruction_text, temperature=0.6, top_p=0.95
     model_file = str(payload.get("model_file", "") or "").strip()
     if not model_file:
         raise ValueError(f"Choose a {label} model first.")
+    print(f"[VRGDG Music Builder] {label}: selected local text GGUF: {model_file}")
     llm = VRGDG_SuperGemmaGGUFChat()
     model_path = llm._resolve_dropdown_path(model_file, llm.MISSING_MODEL_OPTION)
     n_ctx = int(payload.get("n_ctx") or 8000)
@@ -7358,13 +7359,16 @@ def _gemma_choices():
     from .LLM import VRGDG_SuperGemmaGGUFChat
 
     return {
-        "models": VRGDG_SuperGemmaGGUFChat._list_local_gemma_gguf_choices(),
+        "models": VRGDG_SuperGemmaGGUFChat._list_local_text_gguf_choices(),
         "mmproj": VRGDG_SuperGemmaGGUFChat._list_local_mmproj_choices(),
     }
 
 
 _MODEL_DEFAULT_KEYS = (
     "text_gemma_runner",
+    "text_gemma_model",
+    "vision_gemma_model",
+    "mmproj_file",
     "gemma_context_limit",
     "lm_studio_base_url",
     "lm_studio_model",
