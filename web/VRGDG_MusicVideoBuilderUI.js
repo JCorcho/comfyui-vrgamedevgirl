@@ -1642,10 +1642,12 @@ async function cancelComfyExecutionAndWaitIdle(onStatus, options = {}) {
 }
 
 async function queueWorkflowPrompt(prompt, options = {}) {
-  await waitForComfyQueueIdle(options.onStatus, {
-    timeoutMs: options.idleTimeoutMs,
-    shouldCancel: options.shouldCancel,
-  });
+  if (options.waitForIdle !== false) {
+    await waitForComfyQueueIdle(options.onStatus, {
+      timeoutMs: options.idleTimeoutMs,
+      shouldCancel: options.shouldCancel,
+    });
+  }
   const clientId = api.clientId || app?.clientId || crypto.randomUUID();
   const response = await api.fetchApi("/prompt", {
     method: "POST",
@@ -4793,6 +4795,9 @@ function openBuilder(node) {
     isRestoringHistory: false,
     batchCancelled: false,
   };
+  // Runtime-only advisory state. It is deliberately not saved into project
+  // files: ComfyUI remains the authority on its real model cache.
+  let imageWorkflowResidency = null;
 
   function resolvedFacialPerformanceText(segment = null) {
     if (segment?.no_character_present) return "";
@@ -27013,6 +27018,166 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     }
   }
 
+  function gibibytes(value) {
+    const bytes = Number(value || 0);
+    return Number.isFinite(bytes) && bytes > 0 ? `${(bytes / (1024 ** 3)).toFixed(1)} GiB` : "unknown size";
+  }
+
+  function serialResourcePlanFallback(reason = "Adaptive resource assessment is unavailable.") {
+    return {
+      queue_window: 1,
+      renderer_parallelism: 1,
+      model_fingerprint: "",
+      model_bytes: 0,
+      working_set_estimate_bytes: 0,
+      asset_count: 0,
+      can_keep_resident: false,
+      transition_requires_cleanup: false,
+      confidence: "fallback",
+      reason,
+    };
+  }
+
+  async function assessWorkflowResourcePlan(prompt, options = {}) {
+    if (!prompt || typeof prompt !== "object") return serialResourcePlanFallback("The workflow prompt was empty.");
+    const resident = options.resident || imageWorkflowResidency || null;
+    const requestedJobs = Math.max(1, Math.floor(Number(options.requestedJobs || 1))) || 1;
+    try {
+      const plan = await postJson("/vrgdg/workflow_runner/assess_prompt_resources", {
+        prompt,
+        requested_jobs: requestedJobs,
+        resident_model_bytes: resident?.model_bytes || 0,
+      }, 30000);
+      return {
+        ...serialResourcePlanFallback(),
+        ...plan,
+        queue_window: Math.max(1, Math.min(requestedJobs, Number(plan?.queue_window || 1))),
+      };
+    } catch (error) {
+      console.warn("[VRGDG Music Builder] Adaptive resource assessment failed; using serial queue:", error);
+      return serialResourcePlanFallback(String(error?.message || error));
+    }
+  }
+
+  function adaptivePlanStatus(plan, modelLabel) {
+    const window = Math.max(1, Number(plan?.queue_window || 1));
+    const assetText = Number(plan?.asset_count || 0)
+      ? `${plan.asset_count} model asset${Number(plan.asset_count) === 1 ? "" : "s"}, ${gibibytes(plan.model_bytes)} weights`
+      : "model size could not be resolved";
+    const mode = window > 1
+      ? `submission window ${window}`
+      : "serial submission";
+    return [
+      `Adaptive ${modelLabel} plan: ${mode}; ${assetText}.`,
+      "ComfyUI still renders one GPU job at a time; matching jobs stay adjacent so its model cache can remain resident.",
+      String(plan?.reason || "").trim(),
+    ].filter(Boolean).join("\n");
+  }
+
+  async function prepareImageWorkflowResidency(plan, modelLabel, progress, percent = 45) {
+    const previous = imageWorkflowResidency;
+    const changingModel = Boolean(
+      previous?.model_fingerprint
+      && plan?.model_fingerprint
+      && previous.model_fingerprint !== plan.model_fingerprint,
+    );
+    if (changingModel && plan?.transition_requires_cleanup) {
+      progress?.set(
+        `Adaptive VRAM transition: releasing ${previous.label || "the previous image model"} before ${modelLabel}.\n`
+          + `The measured headroom cannot safely hold both estimated stacks.`,
+        percent,
+      );
+      await runClearMemoryWorkflowQuiet(progress, `${previous.label || "image model"} to ${modelLabel} transition`, percent);
+      imageWorkflowResidency = null;
+    }
+    if (plan?.model_fingerprint) {
+      imageWorkflowResidency = {
+        model_fingerprint: plan.model_fingerprint,
+        model_bytes: Number(plan.model_bytes || 0),
+        label: modelLabel,
+      };
+    }
+  }
+
+  async function runAdaptiveSceneWorkflowQueue(items, options = {}) {
+    const jobs = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!jobs.length) return serialResourcePlanFallback("There are no scene jobs to queue.");
+    const modelLabel = String(options.modelLabel || "image workflow");
+    const shouldCancel = typeof options.shouldCancel === "function" ? options.shouldCancel : () => false;
+    const onStatus = typeof options.onStatus === "function" ? options.onStatus : () => {};
+    const buildJob = options.buildJob;
+    const completeJob = options.completeJob;
+    if (typeof buildJob !== "function" || typeof completeJob !== "function") {
+      throw new Error("Adaptive scene queue requires buildJob and completeJob callbacks.");
+    }
+
+    let queuedAny = false;
+    let pendingCount = 0;
+    let activePromptId = "";
+    try {
+      await waitForComfyQueueIdle((status) => onStatus(`Waiting for the existing ComfyUI queue...\n${status}`), {
+        shouldCancel,
+      });
+      if (shouldCancel()) throw new Error("Stopped by user.");
+      const first = await buildJob(jobs[0], 0, jobs.length);
+      if (!first?.prompt) throw new Error(`${modelLabel} did not return a ComfyUI API prompt.`);
+      const plan = await assessWorkflowResourcePlan(first.prompt, {
+        requestedJobs: jobs.length,
+        resident: imageWorkflowResidency,
+      });
+      await prepareImageWorkflowResidency(plan, modelLabel, options.progress, options.planPercent || 45);
+      const windowSize = Math.max(1, Number(plan.queue_window || 1));
+      onStatus(adaptivePlanStatus(plan, modelLabel));
+
+      const pending = [];
+      let nextIndex = 0;
+      const submit = async (prepared = null) => {
+        if (shouldCancel()) throw new Error("Stopped by user.");
+        const index = nextIndex;
+        const item = jobs[index];
+        const job = prepared || await buildJob(item, index, jobs.length);
+        if (!job?.prompt) throw new Error(`${modelLabel} did not return a ComfyUI API prompt.`);
+        const queued = await queueWorkflowPrompt(job.prompt, { waitForIdle: false, shouldCancel });
+        const promptId = queued?.prompt_id;
+        if (!promptId) throw new Error(`ComfyUI queued the ${modelLabel} workflow but did not return a prompt_id.`);
+        queuedAny = true;
+        pending.push({ ...job, item, index, promptId });
+        pendingCount += 1;
+        nextIndex += 1;
+        onStatus(`${modelLabel}: queued ${nextIndex}/${jobs.length} scene${jobs.length === 1 ? "" : "s"} (window ${windowSize}).\nPrompt ID: ${promptId}`);
+      };
+
+      await submit(first);
+      while (nextIndex < jobs.length && pending.length < windowSize) await submit();
+      while (pending.length) {
+        if (shouldCancel()) throw new Error("Stopped by user.");
+        const current = pending.shift();
+        pendingCount -= 1;
+        activePromptId = current.promptId;
+        let images;
+        try {
+          images = await waitForImages(current.promptId, (message) => {
+            onStatus(`${modelLabel} scene ${current.index + 1}/${jobs.length}: ${message}\nPrompt ID: ${current.promptId}`);
+          }, shouldCancel);
+        } finally {
+          activePromptId = "";
+        }
+        await completeJob(current, images, plan);
+        while (nextIndex < jobs.length && pending.length < windowSize) await submit();
+      }
+      return plan;
+    } catch (error) {
+      if (queuedAny && (pendingCount > 0 || activePromptId || shouldCancel())) {
+        await cancelComfyExecutionAndWaitIdle((status) => {
+          onStatus(`${modelLabel}: cancelling queued work after an error...\n${status}`);
+        }, { shouldCancel: () => false }).catch((cancelError) => {
+          console.warn("[VRGDG Music Builder] Could not cancel adaptive scene queue:", cancelError);
+        });
+      }
+      throw error;
+    }
+  }
+
   async function importI2VMotionJson(options = {}) {
     try {
       if (!i2vMotionJsonInput.value.trim()) {
@@ -28253,20 +28418,14 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     return images;
   }
 
-  async function createPonyImageForSegment(segment, progress = null, percentBase = 45, percentSpan = 35, label = "Pony") {
-    state.activeId = segment.id;
-    syncInspector();
+  async function buildPonyImageWorkflow(segment) {
     const prompt = ensureSegmentT2IPromptHasTrigger(segment, "pony", segment.notes || "");
     if (!prompt) throw new Error(`${sceneDisplayName(segment, segmentIndexInfo(segment).index)}: T2I prompt is missing.`);
-    progress?.set(`${label}: building VioletsT2I(Pony) workflow...`, percentBase + percentSpan * 0.25);
     const built = await postJson("/violets_t2i/build_prompt", { prompt }, 120000);
-    progress?.set(`${label}: queueing Pony workflow...`, percentBase + percentSpan * 0.45);
-    const queued = await queueWorkflowPrompt(built.prompt);
-    const promptId = queued?.prompt_id;
-    if (!promptId) throw new Error("ComfyUI queued the Pony workflow but did not return a prompt_id.");
-    const images = await waitForImages(promptId, (message) => {
-      progress?.set(`${label}: ${message}\nPrompt ID: ${promptId}`, percentBase + percentSpan * 0.72);
-    });
+    return { prompt, promptGraph: built.prompt };
+  }
+
+  async function completePonyImageForSegment(segment, prompt, images) {
     for (const image of images) {
       await archiveGeneratedSceneImage(segment, image);
     }
@@ -28280,6 +28439,21 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     syncPreview(segment);
     render();
     return images;
+  }
+
+  async function createPonyImageForSegment(segment, progress = null, percentBase = 45, percentSpan = 35, label = "Pony") {
+    state.activeId = segment.id;
+    syncInspector();
+    progress?.set(`${label}: building VioletsT2I(Pony) workflow...`, percentBase + percentSpan * 0.25);
+    const built = await buildPonyImageWorkflow(segment);
+    progress?.set(`${label}: queueing Pony workflow...`, percentBase + percentSpan * 0.45);
+    const queued = await queueWorkflowPrompt(built.promptGraph);
+    const promptId = queued?.prompt_id;
+    if (!promptId) throw new Error("ComfyUI queued the Pony workflow but did not return a prompt_id.");
+    const images = await waitForImages(promptId, (message) => {
+      progress?.set(`${label}: ${message}\nPrompt ID: ${promptId}`, percentBase + percentSpan * 0.72);
+    });
+    return await completePonyImageForSegment(segment, built.prompt, images);
   }
 
   async function previewPonyImage() {
@@ -33567,31 +33741,66 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         await runClearMemoryWorkflowQuiet(progress, "Image All prompt pass", 42);
       }
       progress.set(`Image All: creating ${scenes.length} ${modelLabel} image${scenes.length === 1 ? "" : "s"} from saved prompts...`, 45);
-      for (let index = 0; index < scenes.length; index += 1) {
-        assertBatchNotStopped();
-        const { segment, index: sceneIndex } = scenes[index];
-        const sceneLabel = sceneDisplayName(segment, sceneIndex);
-        const base = 45 + Math.floor((index / scenes.length) * 45);
-        const span = Math.max(1, Math.floor(40 / scenes.length));
-        state.activeId = segment.id;
-        syncInspector();
-        render();
-        if (forceNewImages && imageMode === "zimage") setImageSeedForCurrentMode("zimage");
-        if (imageMode === "zimage" && img2imgContinuityEnabled() && currentVideoMode() === "i2v") {
-          const previousSegment = previousAutoChainSourceSegment(segment);
-          if (previousSegment) {
-            await prepareAutoImg2ImgContinuityForScene(previousSegment, segment, "zimage", progress, base, `Img2Img Continuity ${index + 1}/${scenes.length}`);
+      if (imageMode === "pony") {
+        await runAdaptiveSceneWorkflowQueue(scenes, {
+          modelLabel: "Pony",
+          progress,
+          planPercent: 45,
+          shouldCancel: () => state.batchCancelled,
+          onStatus: (message) => progress.set(message, 45),
+          buildJob: async (sceneItem, index, total) => {
+            assertBatchNotStopped();
+            const { segment, index: sceneIndex } = sceneItem;
+            const base = 45 + Math.floor((index / total) * 45);
+            state.activeId = segment.id;
+            syncInspector();
+            render();
+            progress.set(`Pony image pass ${index + 1}/${total}: ${sceneDisplayName(segment, sceneIndex)}\nBuilding the workflow from the saved T2I prompt...`, base);
+            const built = await buildPonyImageWorkflow(segment);
+            return {
+              prompt: built.promptGraph,
+              sourcePrompt: built.prompt,
+              segment,
+              sceneIndex,
+              base,
+              total,
+            };
+          },
+          completeJob: async (job, images) => {
+            assertBatchNotStopped();
+            state.activeId = job.segment.id;
+            syncInspector();
+            await completePonyImageForSegment(job.segment, job.sourcePrompt, images);
+            await autoSaveSessionQuiet(`Pony All scene ${job.sceneIndex + 1}`);
+            const completePercent = Math.min(98, job.base + Math.max(1, Math.floor(40 / job.total)));
+            progress.set(`Pony image pass ${job.index + 1}/${job.total}: ${sceneDisplayName(job.segment, job.sceneIndex)} complete.\nKeeping Pony resident for queued scenes.`, completePercent);
+          },
+        });
+      } else {
+        for (let index = 0; index < scenes.length; index += 1) {
+          assertBatchNotStopped();
+          const { segment, index: sceneIndex } = scenes[index];
+          const sceneLabel = sceneDisplayName(segment, sceneIndex);
+          const base = 45 + Math.floor((index / scenes.length) * 45);
+          const span = Math.max(1, Math.floor(40 / scenes.length));
+          state.activeId = segment.id;
+          syncInspector();
+          render();
+          if (forceNewImages && imageMode === "zimage") setImageSeedForCurrentMode("zimage");
+          if (imageMode === "zimage" && img2imgContinuityEnabled() && currentVideoMode() === "i2v") {
+            const previousSegment = previousAutoChainSourceSegment(segment);
+            if (previousSegment) {
+              await prepareAutoImg2ImgContinuityForScene(previousSegment, segment, "zimage", progress, base, `Img2Img Continuity ${index + 1}/${scenes.length}`);
+            }
           }
-        }
-        progress.set(`${modelLabel} image pass ${index + 1}/${scenes.length}: ${sceneLabel}\nCreating image from saved T2I prompt...`, base);
-        if (imageMode === "pony") {
-          await createPonyImageForSegment(segment, progress, base + span * 0.35, span * 0.45, `Pony All ${index + 1}/${scenes.length}: Pony`);
-        } else {
+          progress.set(`${modelLabel} image pass ${index + 1}/${scenes.length}: ${sceneLabel}\nCreating image from saved T2I prompt...`, base);
           await createZImageForSegment(segment, progress, base + span * 0.35, span * 0.45, `Z-Image All ${index + 1}/${scenes.length}: ZImage`);
+          assertBatchNotStopped();
+          await autoSaveSessionQuiet(`Z-Image All scene ${sceneIndex + 1}`);
+          // Do not clear after each scene. ComfyUI can keep the identical
+          // stack resident; the next incompatible workflow will cause its
+          // normal cache manager to offload as needed.
         }
-        assertBatchNotStopped();
-        await autoSaveSessionQuiet(`Z-Image All scene ${sceneIndex + 1}`);
-        await runClearMemoryWorkflowQuiet(progress, sceneLabel, Math.min(98, base + span));
       }
       await autoSaveSessionQuiet(`${modelLabel} All complete`);
       progress.set("Image All complete. You can review the generated images and re-do any scenes you do not like.", 100);

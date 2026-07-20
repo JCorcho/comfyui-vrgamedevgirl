@@ -28,5 +28,6 @@ Treat the normal Builder editor and the Video Wizard as two views of the same pr
 | Local text LLM selection | `text_gemma_model`, `vision_gemma_model`, and `mmproj_file`; Editor and Wizard use the shared setters in `VRGDG_MusicVideoBuilderUI.js`, and Prompt Creator persists `text_gemma_model` in its draft. See `PROMPT_CREATOR_LLM_SELECTION.md`. |
 | Violets LTX 2.3 FP8 | `i2v_model_profile`, `violets_ltx23_checkpoint_name`, `ltx_audio_text_encoder_name`; backend injects DMD `1.0` and JoyAI `0.5`. |
 | Two-pass I2V sampling | `pass1_sampler_name`, `pass1_sigmas`, `pass2_sampler_name`, `pass2_sigmas`. |
+| Adaptive local-workflow execution | No persisted UI setting. Both surfaces enter `zImageAllScenes(...)`, which uses the shared adaptive residency/queue manager. See `ADAPTIVE_VRAM_EXECUTION_MANAGER.md`. |
 
 Do not represent mandatory model adapters as optional Wizard LoRA controls. Put their enforcement in the backend profile patch and show their locked status in both UI surfaces.

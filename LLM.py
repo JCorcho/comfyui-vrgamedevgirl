@@ -101,6 +101,73 @@ def _clear_vrgdg_llm_caches(clear_cuda_cache: bool = True, clear_hf_pipeline_cac
     }
 
 
+def _release_comfy_models_for_gguf_headroom(model_path: str, n_ctx: int, n_gpu_layers: int) -> dict:
+    """Free ComfyUI models only when a new GPU-offloaded GGUF cannot fit.
+
+    The Music Video Builder can run a ComfyUI image stack immediately before a
+    local llama.cpp prompt model.  llama.cpp lives outside ComfyUI's ordinary
+    model cache, so it cannot ask that cache to make room itself.  This small
+    transition guard uses current CUDA free memory and the selected GGUF's
+    actual file size.  It deliberately does nothing when both can coexist.
+    """
+    result = {
+        "checked": False,
+        "released": False,
+        "reason": "",
+        "free_bytes": 0,
+        "required_bytes": 0,
+    }
+    if int(n_gpu_layers or 0) <= 0:
+        result["reason"] = "GGUF GPU offload is disabled."
+        return result
+    try:
+        if not torch.cuda.is_available():
+            result["reason"] = "CUDA is unavailable."
+            return result
+        model_bytes = int(os.path.getsize(model_path))
+        device = torch.cuda.current_device()
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+        # The exact llama.cpp allocation depends on the quantization and model
+        # architecture.  Reserve a model-relative runtime allowance plus a
+        # bounded context allowance and a percentage of total VRAM, rather
+        # than assuming a particular GPU or model family.
+        mib = 1024 * 1024
+        gib = 1024 * mib
+        runtime_allowance = max(512 * mib, int(model_bytes * 0.08))
+        context_allowance = max(128 * mib, min(2 * gib, int(max(0, n_ctx) * 96 * 1024)))
+        safety_reserve = max(gib, int(total_bytes * 0.10))
+        required_bytes = model_bytes + runtime_allowance + context_allowance + safety_reserve
+        result.update({
+            "checked": True,
+            "free_bytes": int(free_bytes),
+            "required_bytes": int(required_bytes),
+        })
+        if free_bytes >= required_bytes:
+            result["reason"] = "Current CUDA headroom can hold the selected GGUF and existing ComfyUI models."
+            return result
+
+        import comfy.model_management as model_management
+
+        unload_all_models = getattr(model_management, "unload_all_models", None)
+        if callable(unload_all_models):
+            unload_all_models()
+        cleanup_models = getattr(model_management, "cleanup_models", None)
+        if callable(cleanup_models):
+            cleanup_models()
+        torch.cuda.empty_cache()
+        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+        if callable(ipc_collect):
+            ipc_collect()
+        result["released"] = True
+        result["reason"] = "Released ComfyUI model cache because measured CUDA headroom was below the selected GGUF estimate."
+    except Exception as exc:
+        # Loading the GGUF still has its own retry-and-cleanup path below.  A
+        # failed advisory check must not prevent the normal error from being
+        # reported to the user.
+        result["reason"] = f"Could not assess GGUF headroom: {exc}"
+    return result
+
+
 @lru_cache(maxsize=1)
 def _load_google_genai_client():
     try:
@@ -3287,6 +3354,18 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
 
         def load_once():
             return Llama(**kwargs)
+
+        headroom = _release_comfy_models_for_gguf_headroom(
+            model_path=normalized_model_path,
+            n_ctx=n_ctx,
+            n_gpu_layers=n_gpu_layers,
+        )
+        if headroom.get("released"):
+            print(
+                "[VRGDG] Released ComfyUI model cache before local GGUF load "
+                f"({headroom.get('free_bytes', 0) / (1024 ** 3):.1f} GiB free, "
+                f"{headroom.get('required_bytes', 0) / (1024 ** 3):.1f} GiB estimated need)."
+            )
 
         try:
             model = load_once()

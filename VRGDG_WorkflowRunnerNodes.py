@@ -1,5 +1,6 @@
 import copy
 import base64
+import hashlib
 import importlib
 import json
 import os
@@ -25,6 +26,26 @@ from .VRGDG_ModelPathSettings import (
 _VRGDG_WORKFLOW_RUNNER_ROUTES_REGISTERED = False
 _MAX_LORA_SLOTS = 20
 _NONE_LORA = "[none]"
+_ADAPTIVE_QUEUE_WINDOW_MAX = 6
+_MIB = 1024 * 1024
+_GIB = 1024 * _MIB
+_MODEL_FILE_EXTENSIONS = {".bin", ".ckpt", ".gguf", ".pt", ".pth", ".safetensors"}
+_PROMPT_MODEL_INPUT_CATEGORIES = {
+    "audio_text_encoder_name": ("text_encoders", "clip"),
+    "audio_vae_name": ("vae",),
+    "checkpoint_name": ("checkpoints",),
+    "ckpt_name": ("checkpoints",),
+    "clip_name": ("clip", "text_encoders"),
+    "control_net_name": ("controlnet",),
+    "controlnet_name": ("controlnet",),
+    "diffusion_model_name": ("diffusion_models", "unet"),
+    "lora_name": ("loras",),
+    "model_name": ("diffusion_models", "unet", "checkpoints", "upscale_models"),
+    "text_encoder_name": ("text_encoders", "clip"),
+    "unet_name": ("unet", "diffusion_models"),
+    "upscale_model_name": ("upscale_models",),
+    "vae_name": ("vae",),
+}
 _REQUIRED_LTX_MSR_LORA = "licon\\LTX-2.3-Licon-MSR-V1.safetensors"
 _REQUIRED_LTX_INGREDIENTS_LORA = "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors"
 _REQUIRED_LTX_ID_LORA = "lora_weights.safetensors"
@@ -334,6 +355,249 @@ def _manual_model_folder_choices(category):
                 rel = os.path.relpath(os.path.join(dirpath, filename), root)
                 choices.append(rel.replace("/", os.sep).replace("\\", os.sep))
     return choices
+
+
+def _model_search_roots(category):
+    """Return the registered and optional custom roots for one model category."""
+    roots = []
+    try:
+        roots.extend(folder_paths.get_folder_paths(category) or [])
+    except Exception:
+        pass
+    try:
+        roots.extend(custom_model_root_subfolders(category))
+    except Exception:
+        pass
+    models_dir = getattr(folder_paths, "models_dir", None)
+    if models_dir:
+        roots.append(os.path.join(models_dir, category))
+
+    normalized = []
+    seen = set()
+    for root in roots:
+        text = os.path.abspath(str(root or ""))
+        key = os.path.normcase(text)
+        if text and key not in seen and os.path.isdir(text):
+            seen.add(key)
+            normalized.append(text)
+    return normalized
+
+
+def _safe_model_path_from_root(root, value):
+    """Resolve a relative ComfyUI model value without allowing root escape."""
+    name = str(value or "").strip().replace("/", os.sep).replace("\\", os.sep)
+    if not name or os.path.isabs(name):
+        return ""
+    root_abs = os.path.abspath(root)
+    candidate = os.path.abspath(os.path.join(root_abs, name))
+    try:
+        if os.path.commonpath([root_abs, candidate]) != root_abs:
+            return ""
+    except ValueError:
+        return ""
+    return candidate if os.path.isfile(candidate) else ""
+
+
+def _resolve_prompt_model_asset(value, categories):
+    """Resolve one API prompt model input to a local model file, if known."""
+    for category in categories:
+        try:
+            resolved = folder_paths.get_full_path(category, value)
+        except Exception:
+            resolved = None
+        if resolved and os.path.isfile(resolved):
+            return os.path.abspath(resolved), str(category)
+        for root in _model_search_roots(category):
+            resolved = _safe_model_path_from_root(root, value)
+            if resolved:
+                return resolved, str(category)
+    return "", ""
+
+
+def _prompt_model_assets(prompt):
+    """Collect model files referenced by a ComfyUI API prompt without loading them."""
+    assets = {}
+    unresolved = []
+    if not isinstance(prompt, dict):
+        return [], unresolved
+    for node_id, node in prompt.items():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for input_name, value in inputs.items():
+            categories = _PROMPT_MODEL_INPUT_CATEGORIES.get(str(input_name or "").strip().lower())
+            if not categories or not isinstance(value, str):
+                continue
+            model_value = value.strip()
+            if not model_value or os.path.splitext(model_value)[1].lower() not in _MODEL_FILE_EXTENSIONS:
+                continue
+            path, category = _resolve_prompt_model_asset(model_value, categories)
+            if not path:
+                unresolved.append({
+                    "node_id": str(node_id),
+                    "input": str(input_name),
+                    "value": model_value,
+                })
+                continue
+            key = os.path.normcase(path)
+            record = assets.setdefault(key, {
+                "path": path,
+                "name": os.path.basename(path),
+                "bytes": 0,
+                "categories": set(),
+                "inputs": set(),
+            })
+            record["categories"].add(category)
+            record["inputs"].add(str(input_name))
+    results = []
+    for record in assets.values():
+        try:
+            record["bytes"] = int(os.path.getsize(record["path"]))
+        except OSError:
+            continue
+        results.append({
+            "path": record["path"],
+            "name": record["name"],
+            "bytes": record["bytes"],
+            "categories": sorted(record["categories"]),
+            "inputs": sorted(record["inputs"]),
+        })
+    return results, unresolved
+
+
+def _runtime_vram_snapshot():
+    """Read live CUDA memory.  This deliberately never loads or unloads a model."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return {"available": False, "reason": "CUDA is not available."}
+        device = torch.cuda.current_device()
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+        return {
+            "available": True,
+            "device": int(device),
+            "free_bytes": int(free_bytes),
+            "total_bytes": int(total_bytes),
+            "allocated_bytes": int(torch.cuda.memory_allocated(device)),
+            "reserved_bytes": int(torch.cuda.memory_reserved(device)),
+        }
+    except Exception as exc:
+        return {"available": False, "reason": f"Could not read CUDA memory: {exc}"}
+
+
+def _largest_prompt_image_pixels(prompt):
+    """Find the largest declared image/latent batch in an API prompt."""
+    largest = 0
+    if not isinstance(prompt, dict):
+        return largest
+    for node in prompt.values():
+        inputs = node.get("inputs") if isinstance(node, dict) else None
+        if not isinstance(inputs, dict):
+            continue
+        try:
+            width = max(0, int(inputs.get("width", 0) or 0))
+            height = max(0, int(inputs.get("height", 0) or 0))
+            batch_size = max(1, int(inputs.get("batch_size", 1) or 1))
+        except (TypeError, ValueError):
+            continue
+        if width and height:
+            largest = max(largest, width * height * batch_size)
+    return largest
+
+
+def _assess_prompt_resources(payload):
+    """Build a conservative, model-agnostic residency and queue plan.
+
+    A ComfyUI server normally renders one prompt per GPU at a time.  The
+    returned queue window therefore controls bounded *submission* batching,
+    not unsafe simultaneous sampling.  It keeps matching model jobs adjacent
+    so ComfyUI can reuse its normal model cache.
+    """
+    prompt = payload.get("prompt") if isinstance(payload, dict) else None
+    if not isinstance(prompt, dict) or not prompt:
+        raise ValueError("A non-empty ComfyUI API prompt is required.")
+
+    assets, unresolved = _prompt_model_assets(prompt)
+    model_bytes = sum(int(item.get("bytes", 0) or 0) for item in assets)
+    largest_pixels = _largest_prompt_image_pixels(prompt)
+    # This is deliberately conservative: model weights plus a minimum
+    # activation reserve, a small fraction of weights, or the largest declared
+    # latent/image footprint, whichever is greatest.  It is an estimate, not a
+    # promise that a renderer can safely execute multiple prompts in parallel.
+    activation_bytes = max(
+        512 * _MIB,
+        int(model_bytes * 0.08),
+        int(largest_pixels * 96),
+    )
+    working_set_bytes = model_bytes + activation_bytes
+    asset_identity = [
+        (os.path.normcase(str(item.get("path") or "")), int(item.get("bytes", 0) or 0))
+        for item in sorted(assets, key=lambda item: os.path.normcase(str(item.get("path") or "")))
+    ]
+    fingerprint = hashlib.sha256(json.dumps(asset_identity, separators=(",", ":")).encode("utf-8")).hexdigest()[:20]
+    vram = _runtime_vram_snapshot()
+    requested_jobs = max(1, min(1000, int(payload.get("requested_jobs", 1) or 1)))
+    resident_model_bytes = max(0, int(payload.get("resident_model_bytes", 0) or 0))
+    reserve_bytes = 0
+    queue_window = 1
+    can_keep_resident = False
+    transition_requires_cleanup = False
+    confidence = "low"
+    reason = "Model files could not be resolved, so the scheduler will stay serial."
+
+    if assets and vram.get("available"):
+        total_bytes = int(vram.get("total_bytes", 0) or 0)
+        free_bytes = int(vram.get("free_bytes", 0) or 0)
+        reserve_bytes = max(_GIB, int(total_bytes * 0.10))
+        can_keep_resident = free_bytes >= working_set_bytes + reserve_bytes
+        transition_requires_cleanup = bool(
+            resident_model_bytes
+            and free_bytes < resident_model_bytes + working_set_bytes + reserve_bytes
+        )
+        if can_keep_resident:
+            headroom_bytes = max(0, free_bytes - working_set_bytes - reserve_bytes)
+            transient_unit = max(256 * _MIB, activation_bytes)
+            queue_window = min(
+                _ADAPTIVE_QUEUE_WINDOW_MAX,
+                requested_jobs,
+                1 + int(headroom_bytes // transient_unit),
+            )
+            queue_window = max(1, queue_window)
+            confidence = "medium" if unresolved else "high"
+            reason = "Sufficient measured VRAM headroom for cache residency and bounded prompt submission."
+        else:
+            reason = "Measured VRAM headroom is tight; use a serial queue and let ComfyUI manage offloading."
+    elif not vram.get("available"):
+        reason = str(vram.get("reason") or "CUDA memory information is unavailable; using a serial queue.")
+
+    return {
+        "model_fingerprint": fingerprint,
+        "model_bytes": model_bytes,
+        "activation_estimate_bytes": activation_bytes,
+        "working_set_estimate_bytes": working_set_bytes,
+        "largest_prompt_pixels": largest_pixels,
+        "asset_count": len(assets),
+        "assets": [
+            {
+                "name": item["name"],
+                "bytes": item["bytes"],
+                "categories": item["categories"],
+            }
+            for item in assets
+        ],
+        "unresolved_assets": unresolved,
+        "vram": vram,
+        "reserve_bytes": reserve_bytes,
+        "can_keep_resident": can_keep_resident,
+        "transition_requires_cleanup": transition_requires_cleanup,
+        "queue_window": queue_window,
+        "renderer_parallelism": 1,
+        "confidence": confidence,
+        "reason": reason,
+    }
 
 
 def _clean_i2v_unet_name(value):
@@ -3754,6 +4018,18 @@ def _ensure_workflow_runner_routes():
     async def vrgdg_workflow_runner_build_clear_memory_prompt(request):
         try:
             result = _build_clear_memory_prompt()
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, **result})
+
+    @server_instance.routes.post("/vrgdg/workflow_runner/assess_prompt_resources")
+    async def vrgdg_workflow_runner_assess_prompt_resources(request):
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "Invalid JSON body."}, status=400)
+        try:
+            result = _assess_prompt_resources(payload)
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         return web.json_response({"ok": True, **result})
