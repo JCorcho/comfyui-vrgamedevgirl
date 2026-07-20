@@ -78,6 +78,10 @@ score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, rating_safe
 
 It leaves negative terms to VioletsT2I(Pony)’s existing negative-conditioning node. The full Pony V6 prompt template uses this score sequence and supports optional source/rating tags; the workflow is already configured with CLIP skip -2, which is also the model-card recommendation. See the [Pony Diffusion V6 XL model card](https://huggingface.co/LyliaEngine/Pony_Diffusion_V6_XL) when changing the grammar.
 
+## Pony workflow testing mode
+
+See [PONY_TESTING_MODE.md](PONY_TESTING_MODE.md) before changing the saved `VioletsT2I(Pony).json` graph. This workflow-level switch is shared by the Builder and Music Video Wizard through the same Pony adapter, so it preserves Editor/Wizard parity without duplicating a UI control.
+
 ## Reproduction recipe: add an `Anima` mode
 
 Use this only after deciding whether Anima needs a separate saved ComfyUI workflow. Do not assume it can reuse the Pony workflow.
