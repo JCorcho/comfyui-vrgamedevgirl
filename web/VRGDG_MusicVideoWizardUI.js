@@ -938,6 +938,13 @@ export function openMusicVideoWizard(api = {}) {
     render();
   }
 
+  async function setWizardProjectMode(mode = "music_video") {
+    await api.setProjectMode?.(mode);
+    done.add("settings");
+    await saveWizardProgress("wizard project mode");
+    render();
+  }
+
   async function setWizardImageMode(mode = "zimage") {
     await api.setImageMode?.(mode);
     done.add("settings");
@@ -949,6 +956,7 @@ export function openMusicVideoWizard(api = {}) {
     const row = el("div", "vrgdg-wizard-pill-row");
     const pills = [
       `Project: ${data.projectFolder ? "saved" : "not set"}`,
+      `Project type: ${data.projectMode === "script_to_film" ? "Script-to-Film" : "Music Video"}`,
       `Audio: ${data.audioPath ? "loaded" : "missing"}`,
       `Scenes: ${Number(data.sceneCount || 0)}`,
       `Mode: ${data.videoModeLabel || "Reference to Video"}`,
@@ -989,6 +997,7 @@ export function openMusicVideoWizard(api = {}) {
     const statusRow = el("div", "vrgdg-wizard-status-row");
     [
       `Project: ${data.projectFolder ? "saved" : "not set"}`,
+      `Project type: ${data.projectMode === "script_to_film" ? "Script-to-Film" : "Music Video"}`,
       `Audio: ${data.audioPath ? "loaded" : "missing"}`,
       `Scenes: ${Number(data.sceneCount || 0)}`,
       `Mode: ${data.videoModeLabel || "Reference to Video"}`,
@@ -1002,6 +1011,13 @@ export function openMusicVideoWizard(api = {}) {
       el("div", "vrgdg-wizard-settings-subtitle", "Set the wizard mode or change how text Gemma runs."),
     );
     const actions = el("div", "vrgdg-wizard-settings-actions");
+    const filmMode = data.projectMode === "script_to_film";
+    const setMusicVideo = button("Music Video", !filmMode ? "primary" : "");
+    const setScriptToFilm = button("Script-to-Film", filmMode ? "primary" : "");
+    const openFilmPlanner = button("Open Film Planner");
+    setMusicVideo.onclick = () => setWizardProjectMode("music_video");
+    setScriptToFilm.onclick = () => setWizardProjectMode("script_to_film");
+    openFilmPlanner.onclick = () => openNestedTool(() => api.openScriptToFilmPlanner?.(), "wizard film planner");
     const activeVideoMode = String(data.videoMode || "i2v");
     const setI2v = button("Set Mode: Image to Video", activeVideoMode === "i2v" ? "primary" : "");
     const setRtv = button("Set Mode: Reference to Video", activeVideoMode === "rtv" ? "primary" : "");
@@ -1011,7 +1027,7 @@ export function openMusicVideoWizard(api = {}) {
     openRunner.onclick = () => {
       openNestedTool(() => api.openGemmaRunner?.(), "wizard gemma runner");
     };
-    actions.append(setI2v, setRtv, openRunner);
+    actions.append(setMusicVideo, setScriptToFilm, openFilmPlanner, setI2v, setRtv, openRunner);
     quickCard.append(actions);
 
     const settingField = (label, control, help) => {
@@ -1518,7 +1534,33 @@ export function openMusicVideoWizard(api = {}) {
     content.append(layout);
   }
 
+  function renderScriptToFilmStep(data, stepId) {
+    const title = stepId === "audio" ? "Film Script" : "Duration-first Film Scenes";
+    const card = el("div", "vrgdg-wizard-info-note");
+    card.style.display = "grid";
+    card.style.gap = "12px";
+    card.append(
+      el("div", "vrgdg-wizard-settings-title", title),
+      el("div", "", stepId === "audio"
+        ? "Script-to-Film does not load a source song, SRT, or lyric timing. Paste the script in the Film Planner, then the selected Prompt Creator model produces duration-snapped shot records."
+        : "Each Film shot carries its own Pony keyframe prompt, natural-language LTX visual-and-audio prompt, character bible, physical continuity, action intensity, camera language, sound design, optional music bed, and transition ambience notes."),
+      el("div", "vrgdg-wizard-note", `Shared Film profile: Film/T2AV + Character Ref · Pony keyframes · Violets LTX 2.3 FP8 · selected LTX audio text encoder · DMD 1.0 · JoyAI 0.5.\nPlanned frames obey (frames − 1) % 8 = 0. Rendered duration reflows following scenes.`),
+    );
+    const actions = el("div", "vrgdg-wizard-settings-actions");
+    const planner = button(stepId === "audio" ? "Paste Script / Create Plan" : "Edit Film Scene Records", "primary");
+    planner.onclick = () => openNestedTool(() => api.openScriptToFilmPlanner?.(), "wizard Script-to-Film planner");
+    const build = button("Build T2I → I2V Film");
+    build.onclick = () => closeAndRun(() => api.buildFullVideo?.(), "wizard Script-to-Film build");
+    actions.append(planner, build);
+    card.append(actions);
+    content.append(card);
+  }
+
   function renderAudio(data) {
+    if (data.projectMode === "script_to_film") {
+      renderScriptToFilmStep(data, "audio");
+      return;
+    }
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "audio/wav,audio/mpeg,audio/flac,audio/mp4,audio/ogg,.wav,.mp3,.flac,.m4a,.ogg";
@@ -1566,7 +1608,11 @@ export function openMusicVideoWizard(api = {}) {
     content.append(fileInput, loaded, drop, status);
   }
 
-  function renderLyrics() {
+  function renderLyrics(data = snapshot()) {
+    if (data.projectMode === "script_to_film") {
+      renderScriptToFilmStep(data, "lyrics");
+      return;
+    }
     const page = el("div", "vrgdg-wizard-lyrics-page");
     const note = el("div", "vrgdg-wizard-info-note");
     note.append(
@@ -2189,6 +2235,17 @@ export function openMusicVideoWizard(api = {}) {
     const data = snapshot();
     const step = steps[activeIndex];
     for (const [id, node] of stepButtons.entries()) {
+      if (data.projectMode === "script_to_film" && id === "audio") {
+        node.querySelector(".vrgdg-wizard-step-title").textContent = "Script";
+        node.querySelector(".vrgdg-wizard-step-caption").textContent = "Film source and duration";
+      } else if (data.projectMode === "script_to_film" && id === "lyrics") {
+        node.querySelector(".vrgdg-wizard-step-title").textContent = "Film Scenes";
+        node.querySelector(".vrgdg-wizard-step-caption").textContent = "Prompts and continuity";
+      } else {
+        const original = steps.find((candidate) => candidate.id === id);
+        node.querySelector(".vrgdg-wizard-step-title").textContent = original?.title || id;
+        node.querySelector(".vrgdg-wizard-step-caption").textContent = original?.caption || "";
+      }
       node.classList.toggle("is-active", id === step.id);
       node.classList.toggle("is-done", done.has(id));
     }
@@ -2196,11 +2253,16 @@ export function openMusicVideoWizard(api = {}) {
     header.textContent = "";
     content.textContent = "";
     main.textContent = "";
-    renderHeader(step);
+    const displayStep = data.projectMode === "script_to_film" && step.id === "audio"
+      ? { ...step, title: "Script", caption: "Film source and duration" }
+      : data.projectMode === "script_to_film" && step.id === "lyrics"
+        ? { ...step, title: "Film Scenes", caption: "Prompts and continuity" }
+        : step;
+    renderHeader(displayStep);
     try {
       if (step.id === "settings") renderSettings(data);
       else if (step.id === "audio") renderAudio(data);
-      else if (step.id === "lyrics") renderLyrics();
+      else if (step.id === "lyrics") renderLyrics(data);
       else if (step.id === "mode") renderMode(data);
       else if (step.id === "references") renderReferences(data);
       else if (step.id === "story") renderStory(data);

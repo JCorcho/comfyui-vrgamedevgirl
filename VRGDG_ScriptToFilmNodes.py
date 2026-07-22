@@ -1,0 +1,590 @@
+"""Isolated Script-to-Film planning, native-audio LTX routing, and final mix routes.
+
+This module deliberately does not change the Music Video workflow.  Its API routes
+use a separate Film project schema and a separate API workflow template.  The only
+shared implementation seam is the existing Violets LTX 2.3 FP8 loader-profile
+patch, which keeps its mandatory DMD/JoyAI LoRAs locked in the backend.
+"""
+
+import asyncio
+import copy
+import json
+import math
+import os
+import shutil
+import subprocess
+import time
+
+import folder_paths
+from aiohttp import web
+from PIL import Image
+from server import PromptServer
+
+from .VRGDG_MusicVideoPromptCreatorNodes import _extract_json_object, _run_text_gemma_custom
+from .VRGDG_WorkflowRunnerNodes import (
+    _DEFAULT_I2V_PASS1_SIGMAS,
+    _DEFAULT_I2V_PASS2_SIGMAS,
+    _I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8,
+    _MAX_LORA_SLOTS,
+    _NONE_LORA,
+    _VIOLETS_LTX23_FP8_CHECKPOINT,
+    _VIOLETS_LTX23_TEXT_ENCODER,
+    _clean_lora_name,
+    _find_ffmpeg_path,
+    _float_payload,
+    _int_payload,
+    _load_api_template,
+    _normalize_sigma_list_text,
+    _patch_i2v_node_overrides,
+    _patch_violets_ltx23_fp8_profile,
+    _prepare_optional_input_image_name,
+    _scene_render_output_folder,
+    _set_api_input,
+)
+
+
+_SCRIPT_TO_FILM_ROUTES_REGISTERED = False
+_FRAME_INTERVAL = 8
+_MIN_FRAMES = 9
+_DEFAULT_FPS = 25
+_DEFAULT_TARGET_SECONDS = 4.0
+_MAX_SCENE_SECONDS = 120.0
+_FILM_PROFILE = "film_t2av_character_ref"
+_FILM_PROFILE_LABEL = "Film/T2AV + Character Ref"
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+_FILM_PLACEHOLDER_IMAGE_NAME = "vrgdg_script_to_film_placeholder.png"
+
+
+def _template_path():
+    return os.path.join(_ROOT, "Workflows", "UsedForUIDoNotTouch", "ScriptToFilm_T2AV_CharacterRef_API.json")
+
+
+def _system_prompt_path():
+    return os.path.join(_ROOT, "prompts", "ScriptToFilm_PromptCreator_System.txt")
+
+
+def _safe_project_folder(value):
+    project = os.path.abspath(str(value or "").strip().strip('"'))
+    if not project:
+        raise ValueError("Project folder is empty.")
+    output_root = os.path.abspath(folder_paths.get_output_directory())
+    try:
+        if os.path.commonpath([project, output_root]) != output_root:
+            raise ValueError("Script-to-Film projects must stay inside ComfyUI's output directory.")
+    except ValueError:
+        raise ValueError("Script-to-Film project folder is not valid for this machine.")
+    os.makedirs(project, exist_ok=True)
+    return project
+
+
+def _read_system_prompt():
+    path = _system_prompt_path()
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Script-to-Film system prompt was not found: {path}")
+    with open(path, "r", encoding="utf-8-sig") as handle:
+        text = handle.read().strip()
+    if "# [GROK_EXPAND_SYSTEM_PROMPT_START]" not in text or "# [GROK_EXPAND_SYSTEM_PROMPT_END]" not in text:
+        raise ValueError("Script-to-Film system prompt is missing its required GROK swap markers.")
+    return text, path
+
+
+def _ensure_film_placeholder_load_image():
+    """Create a valid non-trivial image for bypassed T2AV reference nodes.
+
+    Comfy still executes a LoadImage node even when LTX I2V conditioning is
+    bypassed. The legacy 1×1 placeholder is rejected by the current PyAV image
+    loader, so Film owns a 64×64 RGB placeholder without altering music paths.
+    """
+    input_dir = folder_paths.get_input_directory()
+    os.makedirs(input_dir, exist_ok=True)
+    path = os.path.join(input_dir, _FILM_PLACEHOLDER_IMAGE_NAME)
+    if os.path.isfile(path) and os.path.getsize(path) > 128:
+        return _FILM_PLACEHOLDER_IMAGE_NAME
+    Image.new("RGB", (64, 64), (15, 23, 42)).save(path, format="PNG")
+    return _FILM_PLACEHOLDER_IMAGE_NAME
+
+
+def _finite_number(value, default=0.0):
+    try:
+        number = float(value)
+    except Exception:
+        return float(default)
+    return number if math.isfinite(number) else float(default)
+
+
+def _safe_text(value, limit=12000):
+    return str(value or "").strip()[:limit]
+
+
+def _frame_plan(seconds, fps):
+    clean_fps = max(1, min(120, int(fps or _DEFAULT_FPS)))
+    requested_seconds = max(0.05, min(_MAX_SCENE_SECONDS, _finite_number(seconds, _DEFAULT_TARGET_SECONDS)))
+    # LTX accepts lengths where (frames - 1) is divisible by eight. Round upward
+    # so a planned action is never cut short just to meet the latent constraint.
+    intervals = max(_FRAME_INTERVAL, int(math.ceil((requested_seconds * clean_fps) / _FRAME_INTERVAL)) * _FRAME_INTERVAL)
+    frames = intervals + 1
+    return {
+        "fps": clean_fps,
+        "planned_frames": frames,
+        "target_duration_seconds": intervals / clean_fps,
+    }
+
+
+def _valid_frames(value):
+    try:
+        frames = int(value)
+    except Exception:
+        return 0
+    if frames < _MIN_FRAMES or (frames - 1) % _FRAME_INTERVAL:
+        return 0
+    return frames
+
+
+def _normalize_character_bible(value):
+    source = value if isinstance(value, dict) else {"summary": _safe_text(value, 2000)}
+    raw_refs = source.get("face_refs", source.get("face_references", []))
+    if isinstance(raw_refs, str):
+        raw_refs = [raw_refs] if raw_refs.strip() else []
+    if not isinstance(raw_refs, list):
+        raw_refs = []
+    return {
+        "face_refs": [_safe_text(item, 1024) for item in raw_refs if _safe_text(item, 1024)],
+        "body_type": _safe_text(source.get("body_type", ""), 1000),
+        "distinguishing_features": _safe_text(source.get("distinguishing_features", ""), 2000),
+        "clothing_state": _safe_text(source.get("clothing_state", ""), 2000),
+        "summary": _safe_text(source.get("summary", ""), 3000),
+    }
+
+
+def _normalize_intensity(value):
+    source = value if isinstance(value, dict) else {"summary": _safe_text(value, 2000)}
+    return {
+        "start": _safe_text(source.get("start", ""), 1000),
+        "middle": _safe_text(source.get("middle", ""), 1000),
+        "end": _safe_text(source.get("end", ""), 1000),
+        "peak_moment": _safe_text(source.get("peak_moment", ""), 1000),
+        "summary": _safe_text(source.get("summary", ""), 2000),
+    }
+
+
+def _normalize_scene(raw_scene, index, fps):
+    source = raw_scene if isinstance(raw_scene, dict) else {}
+    requested_duration = source.get("target_duration_seconds", source.get("duration_seconds", _DEFAULT_TARGET_SECONDS))
+    planned_frames = _valid_frames(source.get("planned_frames"))
+    frame_plan = _frame_plan(requested_duration, fps)
+    if planned_frames:
+        frame_plan["planned_frames"] = planned_frames
+        frame_plan["target_duration_seconds"] = (planned_frames - 1) / frame_plan["fps"]
+    render_mode = _safe_text(source.get("film_render_mode", source.get("render_mode", "i2v_t2av")), 80).lower()
+    if render_mode not in {"t2av", "i2v_t2av"}:
+        render_mode = "i2v_t2av"
+    ducking = max(0.0, min(1.0, _finite_number(source.get("ducking_level", 0.25), 0.25)))
+    record = {
+        "id": _safe_text(source.get("id", ""), 180),
+        "scene_number": max(1, int(_finite_number(source.get("scene_number", index + 1), index + 1))),
+        "label": _safe_text(source.get("label", source.get("title", f"Film scene {index + 1}")), 500),
+        "script_beat": _safe_text(source.get("script_beat", source.get("story_beat", "")), 6000),
+        "keyframe_prompt": _safe_text(source.get("keyframe_prompt", source.get("t2i_prompt", source.get("image_prompt", ""))), 8000),
+        "unified_ltx_prompt": _safe_text(source.get("unified_ltx_prompt", source.get("i2v_prompt", source.get("ltx_prompt", ""))), 12000),
+        "spoken_dialogue": _safe_text(source.get("spoken_dialogue", source.get("dialogue", "")), 5000),
+        "character_bible": _normalize_character_bible(source.get("character_bible", {})),
+        "physical_state_progression": _safe_text(source.get("physical_state_progression", ""), 4000),
+        "position_continuity_notes": _safe_text(source.get("position_continuity_notes", ""), 4000),
+        "action_intensity_curve": _normalize_intensity(source.get("action_intensity_curve", {})),
+        "camera_language": _safe_text(source.get("camera_language", ""), 4000),
+        "sound_design_prompt": _safe_text(source.get("sound_design_prompt", ""), 6000),
+        "optional_music_bed_path": _safe_text(source.get("optional_music_bed_path", ""), 4096),
+        "ducking_level": ducking,
+        "transition_ambience_notes": _safe_text(source.get("transition_ambience_notes", ""), 4000),
+        "transition_cut_type": _safe_text(source.get("transition_cut_type", "auto"), 80).lower() or "auto",
+        "transition_overlap_seconds": max(0.0, min(2.0, _finite_number(source.get("transition_overlap_seconds", 0.25), 0.25))),
+        "reference_image_path": _safe_text(source.get("reference_image_path", source.get("character_reference_path", "")), 4096),
+        "reference_image_name": _safe_text(source.get("reference_image_name", ""), 512),
+        "film_render_mode": render_mode,
+        "rendered_video_path": _safe_text(source.get("rendered_video_path", source.get("video_path", "")), 4096),
+        "video_path": _safe_text(source.get("video_path", source.get("rendered_video_path", "")), 4096),
+        "actual_duration_seconds": max(0.0, _finite_number(source.get("actual_duration_seconds", 0), 0)),
+        "timing_source": _safe_text(source.get("timing_source", "planned"), 80) or "planned",
+        **frame_plan,
+    }
+    # Builder compatibility aliases keep the Film scene record editable by the
+    # shared scene tools while the canonical Film names above remain explicit.
+    record["t2i_prompt"] = record["keyframe_prompt"]
+    record["i2v_prompt"] = record["unified_ltx_prompt"]
+    record["dialogue"] = record["spoken_dialogue"]
+    record["character_reference_path"] = record["reference_image_path"]
+    record["start"] = max(0.0, _finite_number(source.get("start", 0), 0))
+    record["end"] = max(record["start"], _finite_number(source.get("end", record["start"] + record["target_duration_seconds"]), record["start"] + record["target_duration_seconds"]))
+    return record
+
+
+def _reflow_scenes(raw_scenes, fps):
+    if not isinstance(raw_scenes, list):
+        raise ValueError("Script-to-Film scenes must be a list.")
+    scenes = []
+    cursor = 0.0
+    for index, source in enumerate(raw_scenes):
+        scene = _normalize_scene(source, index, fps)
+        duration = scene["actual_duration_seconds"] or scene["target_duration_seconds"]
+        scene["start"] = cursor
+        scene["end"] = cursor + duration
+        scene["timeline_duration_seconds"] = duration
+        scenes.append(scene)
+        cursor = scene["end"]
+    return scenes, cursor
+
+
+def _plan_payload(payload):
+    fps = _int_payload(payload, "fps", _DEFAULT_FPS, 1, 120)
+    raw_scenes = payload.get("scenes", payload.get("film_scenes", []))
+    scenes, duration = _reflow_scenes(raw_scenes, fps)
+    return {
+        "project_mode": "script_to_film",
+        "fps": fps,
+        "frame_constraint": "(frames - 1) % 8 == 0",
+        "profile": _FILM_PROFILE,
+        "profile_label": _FILM_PROFILE_LABEL,
+        "scenes": scenes,
+        "total_duration_seconds": duration,
+    }
+
+
+def _create_prompt_creator_output(payload):
+    script = _safe_text(payload.get("script", payload.get("raw_script", "")), 40000)
+    if not script:
+        raise ValueError("Paste a script before creating a Script-to-Film plan.")
+    system_prompt, system_path = _read_system_prompt()
+    result = _run_text_gemma_custom(
+        payload.get("model_file", payload.get("text_gemma_model", "")),
+        system_prompt,
+        script,
+        payload.get("llm_settings"),
+        payload,
+    )
+    parsed = _extract_json_object(result.get("text", ""))
+    source_scenes = parsed.get("scenes", parsed.get("film_scenes", [])) if isinstance(parsed, dict) else []
+    if not isinstance(source_scenes, list) or not source_scenes:
+        raise ValueError("Script-to-Film Prompt Creator did not return a non-empty 'scenes' JSON list.")
+    plan = _plan_payload({"fps": payload.get("fps", _DEFAULT_FPS), "scenes": source_scenes})
+    plan.update({
+        "raw_text": result.get("text", ""),
+        "used_model": result.get("used_model", ""),
+        "runner": result.get("runner", "builtin"),
+        "system_prompt_path": system_path,
+    })
+    return plan
+
+
+def _save_plan(payload):
+    project = _safe_project_folder(payload.get("project_folder", ""))
+    plan = _plan_payload(payload)
+    film_folder = os.path.join(project, "script_to_film")
+    os.makedirs(film_folder, exist_ok=True)
+    path = os.path.join(film_folder, "film_scene_plan.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(plan, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return {"plan_path": path, **plan}
+
+
+def _probe_duration(video_path):
+    path = os.path.abspath(str(video_path or "").strip().strip('"'))
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Rendered Film scene video was not found: {path}")
+    ffmpeg_path = _find_ffmpeg_path()
+    ffprobe_path = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe.exe" if os.name == "nt" else "ffprobe")
+    if not os.path.isfile(ffprobe_path):
+        ffprobe_path = "ffprobe"
+    result = subprocess.run(
+        [ffprobe_path, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=True,
+    )
+    duration = _finite_number(result.stdout.strip(), 0.0)
+    if duration <= 0.01:
+        raise ValueError(f"Could not measure a usable duration from rendered Film scene: {path}")
+    return duration
+
+
+def _measure_and_reflow(payload):
+    fps = _int_payload(payload, "fps", _DEFAULT_FPS, 1, 120)
+    scenes = payload.get("scenes", [])
+    target_id = _safe_text(payload.get("scene_id", ""), 180)
+    target_number = int(_finite_number(payload.get("scene_number", 0), 0))
+    duration = _probe_duration(payload.get("video_path", ""))
+    matched = False
+    for index, source in enumerate(scenes if isinstance(scenes, list) else []):
+        source_id = _safe_text(source.get("id", ""), 180) if isinstance(source, dict) else ""
+        source_number = int(_finite_number(source.get("scene_number", index + 1), index + 1)) if isinstance(source, dict) else index + 1
+        if (target_id and source_id == target_id) or (not target_id and target_number and source_number == target_number):
+            source["actual_duration_seconds"] = duration
+            source["timing_source"] = "rendered_media"
+            source["rendered_video_path"] = os.path.abspath(str(payload.get("video_path", "") or "").strip().strip('"'))
+            matched = True
+            break
+    if not matched:
+        raise ValueError("The rendered Film scene was not present in the supplied timeline.")
+    reflowed, total = _reflow_scenes(scenes, fps)
+    return {"fps": fps, "scenes": reflowed, "total_duration_seconds": total, "measured_duration_seconds": duration}
+
+
+def _film_prompt_payload(payload):
+    prompt = _safe_text(payload.get("unified_ltx_prompt", payload.get("i2v_prompt", "")), 12000)
+    if not prompt:
+        raise ValueError("Script-to-Film unified LTX prompt is empty.")
+    project = _safe_project_folder(payload.get("project_folder", ""))
+    fps = _int_payload(payload, "fps", _DEFAULT_FPS, 1, 120)
+    requested_frames = _valid_frames(payload.get("planned_frames"))
+    if requested_frames:
+        planned_frames = requested_frames
+        target_duration = (planned_frames - 1) / fps
+    else:
+        frame_plan = _frame_plan(payload.get("target_duration_seconds", _DEFAULT_TARGET_SECONDS), fps)
+        planned_frames = frame_plan["planned_frames"]
+        target_duration = frame_plan["target_duration_seconds"]
+    use_reference = str(payload.get("film_render_mode", "i2v_t2av")).strip().lower() != "t2av"
+    image_info = {
+        "path": payload.get("reference_image_path", payload.get("character_reference_path", "")),
+        "data": payload.get("reference_image_data", payload.get("character_reference_data", "")),
+        "name": payload.get("reference_image_name", payload.get("character_reference_name", "film_keyframe.png")),
+    }
+    image_name = _prepare_optional_input_image_name(image_info) if use_reference else _ensure_film_placeholder_load_image()
+    if use_reference and image_name == "(none)":
+        raise ValueError("Film/T2AV + Character Ref needs a Pony keyframe or a character reference image. Choose pure T2AV for an unconditioned establishing shot.")
+
+    _, template = _load_api_template(_template_path())
+    prompt_graph = copy.deepcopy(template)
+    # Script-to-Film intentionally has one supported model profile: its backend
+    # profile enforces the required DMD/JoyAI LoRAs and exposes the selected LTX
+    # audio text encoder. Music-video profiles remain untouched.
+    profile = _safe_text(payload.get("i2v_model_profile", _I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8), 100)
+    if profile != _I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8:
+        raise ValueError("Script-to-Film currently requires the Violets LTX 2.3 FP8 profile so native audio and locked LoRAs remain reproducible.")
+    _patch_violets_ltx23_fp8_profile(prompt_graph, payload)
+
+    width = _int_payload(payload, "width", 1280, 64, 4096)
+    height = _int_payload(payload, "height", 720, 64, 4096)
+    seed = _int_payload(payload, "seed", 1, 0, 0xFFFFFFFFFFFFFFFF)
+    scene_number = _int_payload(payload, "scene_number", 1, 1, 999999)
+    output_folder = _scene_render_output_folder(project, "script_to_film_clips", {"scene_number": scene_number})
+    _set_api_input(prompt_graph, "736:424", "value", fps)
+    _set_api_input(prompt_graph, "736:425", "value", width)
+    _set_api_input(prompt_graph, "736:426", "value", height)
+    _set_api_input(prompt_graph, "736:449", "value", seed)
+    _set_api_input(prompt_graph, "film:frames", "value", planned_frames)
+    _set_api_input(prompt_graph, "film:character_reference", "image", image_name)
+    _set_api_input(prompt_graph, "218:222", "bypass", not use_reference)
+    _set_api_input(prompt_graph, "218:222", "strength", _float_payload(payload, "pass1_inplace_strength", 1.0, 0.0, 1.0))
+    _set_api_input(prompt_graph, "219:221", "bypass", not use_reference)
+    _set_api_input(prompt_graph, "219:221", "strength", _float_payload(payload, "pass2_inplace_strength", 1.0, 0.0, 1.0))
+    _set_api_input(prompt_graph, "933", "text", prompt)
+    _set_api_input(prompt_graph, "933", "output_mode", "string")
+    _set_api_input(prompt_graph, "film:output_prefix", "value", os.path.join(output_folder, "script_to_film"))
+    _set_api_input(prompt_graph, "273", "frame_rate", ["736:424", 0])
+    _set_api_input(prompt_graph, "273", "crf", _int_payload(payload, "crf", 19, 0, 51))
+    _set_api_input(prompt_graph, "937", "use_custom_loras", bool(payload.get("use_custom_loras", False)))
+    _set_api_input(prompt_graph, "937", "lora_count", _int_payload(payload, "lora_count", 0, 0, _MAX_LORA_SLOTS))
+    for slot in range(1, _MAX_LORA_SLOTS + 1):
+        legacy = _float_payload(payload, f"strength_{slot}", 1.0)
+        _set_api_input(prompt_graph, "937", f"lora_{slot}", _clean_lora_name(payload.get(f"lora_{slot}", _NONE_LORA)))
+        _set_api_input(prompt_graph, "937", f"first_pass_strength_{slot}", _float_payload(payload, f"first_pass_strength_{slot}", legacy))
+        _set_api_input(prompt_graph, "937", f"second_pass_strength_{slot}", _float_payload(payload, f"second_pass_strength_{slot}", legacy))
+    _patch_i2v_node_overrides(prompt_graph, payload)
+    # The generic I2V patch accepts user bypass values. Film establishes its
+    # conditioning contract here: pure T2AV cannot accidentally retain image
+    # conditioning, while I2V/T2AV always uses the supplied character keyframe.
+    _set_api_input(prompt_graph, "218:222", "bypass", not use_reference)
+    _set_api_input(prompt_graph, "219:221", "bypass", not use_reference)
+    return {
+        "workflow_path": _template_path(),
+        "output_folder": output_folder,
+        "prompt": prompt_graph,
+        "profile": _FILM_PROFILE,
+        "profile_label": _FILM_PROFILE_LABEL,
+        "native_audio": True,
+        "reference_conditioning": use_reference,
+        "planned_frames": planned_frames,
+        "target_duration_seconds": target_duration,
+        "fps": fps,
+    }
+
+
+def _film_stitch(payload):
+    """Stitch embedded native audio and carry short previous-scene ambience over cuts.
+
+    The underlying video concat remains a hard video edit. When requested, a faded
+    tail from the previous scene is mixed at the beginning of the next scene. This
+    preserves the generated dialogue's timeline while carrying ambience/action beds
+    across a position change. Explicit hard cuts skip the overlap.
+    """
+    from .VRGDG_WorkflowRunnerNodes import _stitch_scene_videos
+
+    project = _safe_project_folder(payload.get("project_folder", ""))
+    scenes = payload.get("scenes", [])
+    if not isinstance(scenes, list) or not scenes:
+        raise ValueError("No Script-to-Film scenes were supplied for stitching.")
+    paths = []
+    scene_records = []
+    for index, scene in enumerate(scenes, start=1):
+        if not isinstance(scene, dict):
+            raise ValueError(f"Film scene {index} is invalid.")
+        raw_path = str(scene.get("rendered_video_path", scene.get("video_path", "")) or "").strip().strip('"')
+        if not raw_path:
+            raise ValueError(f"Film scene {index} is missing its rendered video path.")
+        path = os.path.abspath(raw_path)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Film scene {index} rendered video was not found: {path}")
+        paths.append(path)
+        scene_records.append(scene)
+    result = _stitch_scene_videos({
+        "scene_paths": paths,
+        "audio_path": "",
+        "use_embedded_scene_audio": True,
+        "project_folder": project,
+        "width": _int_payload(payload, "width", 0, 0, 8192),
+        "height": _int_payload(payload, "height", 0, 0, 8192),
+        "output_prefix": payload.get("output_prefix", "SCRIPT_TO_FILM"),
+    })
+
+    overlap_items = []
+    cursor = 0.0
+    for index, scene in enumerate(scene_records[:-1]):
+        duration = max(0.05, _finite_number(scene.get("actual_duration_seconds") or scene.get("timeline_duration_seconds") or scene.get("target_duration_seconds"), _DEFAULT_TARGET_SECONDS))
+        next_scene = scene_records[index + 1]
+        cut_type = _safe_text(next_scene.get("transition_cut_type", scene.get("transition_cut_type", "auto")), 80).lower()
+        notes = _safe_text(next_scene.get("transition_ambience_notes", scene.get("transition_ambience_notes", "")), 4000)
+        overlap = max(0.0, min(2.0, _finite_number(next_scene.get("transition_overlap_seconds", scene.get("transition_overlap_seconds", 0.25)), 0.25)))
+        if cut_type == "hard_cut" or not notes or overlap <= 0:
+            cursor += duration
+            continue
+        overlap_items.append({"path": paths[index], "start_at": cursor + duration, "duration": min(overlap, duration)})
+        cursor += duration
+
+    music_bed = _safe_text(payload.get("optional_music_bed_path", ""), 4096)
+    ducking = max(0.0, min(1.0, _finite_number(payload.get("ducking_level", 0.25), 0.25)))
+    if not overlap_items and not music_bed:
+        result["ambience_overlaps_applied"] = 0
+        return result
+
+    final_path = result["final_video_path"]
+    ffmpeg = _find_ffmpeg_path()
+    working_dir = os.path.join(project, "rendered_scene_videos", "_script_to_film_audio_mix")
+    os.makedirs(working_dir, exist_ok=True)
+    temp_output = os.path.join(working_dir, f"film_mix_{int(time.time() * 1000)}.mp4")
+    command = [ffmpeg, "-y", "-i", final_path]
+    for item in overlap_items:
+        command.extend(["-sseof", f"-{item['duration']:.6f}", "-i", item["path"]])
+    use_music = bool(music_bed and os.path.isfile(os.path.abspath(music_bed)))
+    if use_music:
+        command.extend(["-stream_loop", "-1", "-i", os.path.abspath(music_bed)])
+    filters = []
+    mix_inputs = ["[0:a]"]
+    for index, item in enumerate(overlap_items, start=1):
+        delay = int(max(0.0, item["start_at"]) * 1000)
+        filters.append(f"[{index}:a]afade=t=out:st=0:d={item['duration']:.6f},adelay={delay}|{delay}[tail{index}]")
+        mix_inputs.append(f"[tail{index}]")
+    if use_music:
+        music_index = len(overlap_items) + 1
+        filters.append(f"[{music_index}:a]volume={ducking:.4f},atrim=duration=86400[music]")
+        mix_inputs.append("[music]")
+    filters.append("".join(mix_inputs) + f"amix=inputs={len(mix_inputs)}:duration=first:normalize=0[aout]")
+    command.extend(["-filter_complex", ";".join(filters), "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-shortest", temp_output])
+    try:
+        subprocess.run(command, capture_output=True, text=True, errors="replace", check=True)
+        shutil.move(temp_output, final_path)
+    finally:
+        try:
+            if os.path.isfile(temp_output):
+                os.remove(temp_output)
+        except OSError:
+            pass
+    result["ambience_overlaps_applied"] = len(overlap_items)
+    result["optional_music_bed_applied"] = use_music
+    result["ducking_level"] = ducking if use_music else 0.0
+    return result
+
+
+def _ensure_routes():
+    global _SCRIPT_TO_FILM_ROUTES_REGISTERED
+    if _SCRIPT_TO_FILM_ROUTES_REGISTERED:
+        return
+    server = getattr(PromptServer, "instance", None)
+    if server is None:
+        return
+
+    @server.routes.get("/vrgdg/script_to_film/config")
+    async def script_to_film_config(_request):
+        return web.json_response({
+            "ok": True,
+            "project_mode": "script_to_film",
+            "profile": _FILM_PROFILE,
+            "profile_label": _FILM_PROFILE_LABEL,
+            "frame_constraint": "(frames - 1) % 8 == 0",
+            "default_fps": _DEFAULT_FPS,
+            "default_target_seconds": _DEFAULT_TARGET_SECONDS,
+            "system_prompt_path": _system_prompt_path(),
+            "system_prompt_exists": os.path.isfile(_system_prompt_path()),
+            "workflow_template_path": _template_path(),
+            "workflow_template_exists": os.path.isfile(_template_path()),
+            "reference_conditioning": "Direct LTX I2V keyframe/reference-image conditioning. IP-Adapter and InstantID are not loaded on this ComfyUI install.",
+        })
+
+    @server.routes.post("/vrgdg/script_to_film/plan")
+    async def script_to_film_plan(request):
+        try:
+            return web.json_response({"ok": True, **_plan_payload(await request.json())})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/create_prompt_plan")
+    async def script_to_film_create_prompt_plan(request):
+        try:
+            payload = await request.json()
+            result = await asyncio.to_thread(_create_prompt_creator_output, payload)
+            return web.json_response({"ok": True, **result})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/save_plan")
+    async def script_to_film_save_plan(request):
+        try:
+            return web.json_response({"ok": True, **_save_plan(await request.json())})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/measure_and_reflow")
+    async def script_to_film_measure_and_reflow(request):
+        try:
+            payload = await request.json()
+            result = await asyncio.to_thread(_measure_and_reflow, payload)
+            return web.json_response({"ok": True, **result})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/build_t2av_prompt")
+    async def script_to_film_build_t2av_prompt(request):
+        try:
+            return web.json_response({"ok": True, **_film_prompt_payload(await request.json())})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/stitch_native_audio")
+    async def script_to_film_stitch_native_audio(request):
+        try:
+            payload = await request.json()
+            result = await asyncio.to_thread(_film_stitch, payload)
+            return web.json_response({"ok": True, **result})
+        except subprocess.CalledProcessError as exc:
+            return web.json_response({"ok": False, "error": exc.stderr or exc.stdout or str(exc)}, status=400)
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    _SCRIPT_TO_FILM_ROUTES_REGISTERED = True
+
+
+_ensure_routes()
+
+NODE_CLASS_MAPPINGS = {}
+NODE_DISPLAY_NAME_MAPPINGS = {}

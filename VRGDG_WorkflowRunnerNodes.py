@@ -3442,6 +3442,8 @@ def _find_scene_video_output(payload):
         prefixes = ("ingredients_to_video_clips", "ingredients_to_video_clips_")
     elif mode == "id_lora":
         prefixes = ("id_lora_i2v_clips", "id_lora_i2v_clips_")
+    elif mode == "script_to_film":
+        prefixes = ("script_to_film_clips", "script_to_film_clips_")
     else:
         prefixes = ("image_to_video_clips", "image_to_video_clips_")
 
@@ -3475,7 +3477,10 @@ def _find_scene_video_output(payload):
                 continue
             for name in files:
                 lower = name.lower()
-                if not lower.endswith("-audio.mp4"):
+                if mode == "script_to_film":
+                    if not lower.endswith((".mp4", ".mov", ".mkv", ".webm")):
+                        continue
+                elif not lower.endswith("-audio.mp4"):
                     continue
                 path = os.path.abspath(os.path.join(root, name))
                 try:
@@ -3486,7 +3491,15 @@ def _find_scene_video_output(payload):
                 if size <= 0 or (min_mtime and mtime + 1 < min_mtime):
                     continue
                 score = 0
+                # A Film render has a dedicated per-scene output folder. Prefer
+                # that explicit folder over a newer similarly named clip from a
+                # later scene; otherwise the history fallback can collect scene 2
+                # while waiting for scene 1.
+                if mode == "script_to_film" and output_folder and os.path.normcase(os.path.abspath(folder)) == os.path.normcase(output_folder):
+                    score += 5000
                 if scene_number and re.match(rf"^video_{scene_number:04d}-audio\.mp4$", name, re.IGNORECASE):
+                    score += 1000
+                if mode == "script_to_film" and scene_number and re.search(rf"(?:scene[_-])?{scene_number:04d}", name, re.IGNORECASE):
                     score += 1000
                 if prompt_number and re.match(rf"^video_{prompt_number:04d}(?:_|-)", name, re.IGNORECASE):
                     score += 700

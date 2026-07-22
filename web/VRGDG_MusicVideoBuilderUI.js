@@ -10,7 +10,8 @@ import {
   storyboardGptPayload,
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
-import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260717-i2v-parity";
+import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260721-script-to-film";
+import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260721-script-to-film";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
@@ -34,7 +35,7 @@ import {
 } from "./VRGDG_OverlayTrack.js";
 
 const NODE_NAME = "VRGDG_MusicVideoBuilderUI";
-const BUILDER_UI_VERSION = "welcome-startup-2026-05-20";
+const BUILDER_UI_VERSION = "script-to-film-2026-07-21";
 const HIDDEN_WIDGETS = new Set(["audio_path", "project_folder", "session_path", "srt_path"]);
 const DEFAULT_I2V_UNET = "LTX-2.3-22B-distilled-1.1-Q6_K.gguf";
 const DEFAULT_I2V_DIFFUSION_MODEL = "LTX_8bit\\ltx-2.3-22b-dev_transformer_only_int8_convrot.safetensors";
@@ -1728,6 +1729,26 @@ function audioUrl(path) {
     enhance_notes: "",
     enhance_prompt: "",
     i2v_prompt: "",
+    // Script-to-Film owns these neutral fields. They are harmless persisted
+    // metadata in Music Video projects, but are only interpreted in Film mode.
+    film_render_mode: "i2v_t2av",
+    target_duration_seconds: Math.max(0.1, Number(end) - Number(start) || 4),
+    planned_frames: 97,
+    actual_duration_seconds: 0,
+    character_bible: "",
+    character_reference_path: "",
+    physical_state_progression: "",
+    position_continuity_notes: "",
+    action_intensity_curve: "",
+    camera_language: "",
+    sound_design_prompt: "",
+    optional_music_bed_path: "",
+    ducking_level: 0.25,
+    transition_ambience_notes: "",
+    transition_cut_type: "auto",
+    transition_overlap_seconds: 0.25,
+    unified_ltx_prompt: "",
+    dialogue: "",
     ref_image_path: "",
     use_vision_reference: false,
     use_i2v_vision_reference: true,
@@ -4678,6 +4699,8 @@ function openBuilder(node) {
 
 
   const state = {
+    projectMode: "music_video",
+    scriptToFilm: { script: "", fps: 25, default_target_duration_seconds: 4 },
     duration: 0,
     peaks: [],
     beats: [],
@@ -7933,6 +7956,8 @@ function openBuilder(node) {
 
   function historySnapshot() {
     return JSON.stringify({
+      projectMode: state.projectMode,
+      scriptToFilm: state.scriptToFilm,
       segments: state.segments,
       overlaySegments: state.overlaySegments,
       overlayTrack: normalizeOverlayTrackState(state.overlayTrack),
@@ -8002,6 +8027,13 @@ function openBuilder(node) {
   function restoreHistorySnapshot(snapshot) {
     const data = JSON.parse(snapshot);
     state.isRestoringHistory = true;
+    state.projectMode = String(data.projectMode || data.project_mode || "music_video").trim().toLowerCase() === "script_to_film" ? "script_to_film" : "music_video";
+    state.scriptToFilm = {
+      script: String(data.scriptToFilm?.script || data.script_to_film?.script || ""),
+      fps: Math.max(1, Math.min(120, Number(data.scriptToFilm?.fps || data.script_to_film?.fps || 25))),
+      default_target_duration_seconds: Math.max(.1, Number(data.scriptToFilm?.default_target_duration_seconds || data.script_to_film?.default_target_duration_seconds || 4)),
+      ...((data.scriptToFilm && typeof data.scriptToFilm === "object") ? data.scriptToFilm : (data.script_to_film && typeof data.script_to_film === "object" ? data.script_to_film : {})),
+    };
     state.segments = data.segments || [];
     state.overlaySegments = data.overlaySegments || data.overlay_segments || [];
     state.overlaySegments.forEach(normalizeOverlayClip);
@@ -27235,6 +27267,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
 
   function currentSessionData() {
     return {
+      project_mode: state.projectMode || "music_video",
+      script_to_film: state.scriptToFilm || {},
       segments: sanitizedSessionSegments(state.segments, "base"),
       overlay_segments: sanitizedSessionSegments(state.overlaySegments, "overlay"),
       overlay_track: normalizeOverlayTrackState(state.overlayTrack),
@@ -27783,6 +27817,13 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       const session = data.session || {};
       faceFixTool.reset?.();
       pushHistory();
+      state.projectMode = String(session.project_mode || "music_video").trim().toLowerCase() === "script_to_film" ? "script_to_film" : "music_video";
+      state.scriptToFilm = {
+        script: String(session.script_to_film?.script || ""),
+        fps: Math.max(1, Math.min(120, Number(session.script_to_film?.fps || 25))),
+        default_target_duration_seconds: Math.max(0.1, Number(session.script_to_film?.default_target_duration_seconds || 4)),
+        ...((session.script_to_film && typeof session.script_to_film === "object") ? session.script_to_film : {}),
+      };
       state.segments = Array.isArray(session.segments) ? session.segments : [];
       state.overlaySegments = Array.isArray(session.overlay_segments) ? session.overlay_segments : [];
       state.overlaySegments.forEach(normalizeOverlayClip);
@@ -32855,7 +32896,226 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     };
   }
 
+  function isScriptToFilmMode() {
+    return state.projectMode === "script_to_film";
+  }
+
+  function scriptToFilmFps() {
+    return Math.max(1, Math.min(120, Number(state.scriptToFilm?.fps || 25)));
+  }
+
+  function mergeScriptToFilmTimeline(reflowedScenes) {
+    if (!Array.isArray(reflowedScenes)) return;
+    const byId = new Map(reflowedScenes.map((scene) => [String(scene?.id || ""), scene]));
+    state.segments.forEach((segment, index) => {
+      const reflowed = byId.get(String(segment?.id || "")) || reflowedScenes[index];
+      if (reflowed && typeof reflowed === "object") Object.assign(segment, reflowed);
+    });
+    state.duration = Math.max(0, ...state.segments.map((segment) => Number(segment.end || 0)));
+    ensureAllSegmentRuntimeFields();
+  }
+
+  function setScriptToFilmMode(mode, reason = "mode change") {
+    const next = String(mode || "music_video").trim().toLowerCase() === "script_to_film" ? "script_to_film" : "music_video";
+    if (next === state.projectMode) return;
+    pushHistory();
+    state.projectMode = next;
+    if (next === "script_to_film") {
+      // Pony and the Violets LTX profile are enforced at the Film route, while
+      // keeping the Music Video settings themselves intact for a later switch.
+      state.imageModelMode = "pony";
+      state.scriptToFilm = {
+        script: String(state.scriptToFilm?.script || ""),
+        fps: scriptToFilmFps(),
+        default_target_duration_seconds: Math.max(0.1, Number(state.scriptToFilm?.default_target_duration_seconds || 4)),
+        ...(state.scriptToFilm || {}),
+      };
+    }
+    syncInspector();
+    render();
+    autoSaveSessionQuiet(`Script-to-Film ${reason}`).catch(() => null);
+  }
+
+  function applyScriptToFilmPlan(plan = {}) {
+    if (isScriptToFilmMode()) pushHistory();
+    setScriptToFilmMode("script_to_film", "plan applied");
+    state.scriptToFilm = {
+      ...(state.scriptToFilm || {}),
+      ...(plan.script_to_film || {}),
+      fps: Math.max(1, Math.min(120, Number(plan.fps || plan.script_to_film?.fps || scriptToFilmFps()))),
+    };
+    if (Array.isArray(plan.scenes)) state.segments = plan.scenes;
+    mergeScriptToFilmTimeline(plan.scenes || state.segments);
+    if (state.segments.length) state.activeId = state.segments[0].id;
+    syncInspector();
+    render();
+    autoSaveSessionQuiet("Script-to-Film plan applied").catch(() => null);
+  }
+
+  function openScriptToFilmPlannerFromBuilder() {
+    setScriptToFilmMode("script_to_film", "planner opened");
+    return openScriptToFilmPlanner({
+      snapshot: () => ({
+        projectFolder: String(projectInput.value || state.projectFolder || "").trim(),
+        projectMode: state.projectMode,
+        scriptToFilm: state.scriptToFilm,
+        segments: state.segments,
+        textGemmaModel: state.textGemmaModel || i2vTextGemmaModelSelect.value || t2iTextGemmaModelSelect.value || "",
+        llmSettings: {
+          n_ctx: state.gemmaContextLimit,
+          n_gpu_layers: state.gemmaGpuLayers,
+        },
+        text_gemma_runner: state.textGemmaRunner,
+        lm_studio_base_url: state.lmStudioBaseUrl,
+        lm_studio_model: state.lmStudioModel,
+        lm_studio_api_key: state.lmStudioApiKey,
+        llm_api_provider: state.llmApiProvider,
+        llm_api_model: state.llmApiModel,
+      }),
+      applyPlan: applyScriptToFilmPlan,
+      build: async () => buildScriptToFilmPipeline({ buildMode: "resume_missing" }),
+    });
+  }
+
+  async function renderScriptToFilmScene(segment, sceneIndex, progress, options = {}) {
+    const fps = scriptToFilmFps();
+    const sceneNumber = sceneSlotNumber(segment);
+    const base = Number(options.progressBase ?? 0);
+    const span = Number(options.progressSpan ?? 100);
+    const pct = (value) => Math.min(100, base + (span * value / 100));
+    const label = sceneDisplayName(segment, sceneIndex);
+    const useReference = String(segment.film_render_mode || "i2v_t2av").toLowerCase() !== "t2av";
+    const unifiedPrompt = String(segment.unified_ltx_prompt || segment.i2v_prompt || "").trim();
+    if (!unifiedPrompt) throw new Error(`${label}: Script-to-Film needs a unified LTX visual + audio prompt.`);
+    if (useReference && !String(segment.character_reference_path || selectedSegmentImagePath(segment) || "").trim()) {
+      const ponyPrompt = String(segment.t2i_prompt || "").trim();
+      if (!ponyPrompt) throw new Error(`${label}: add a Pony keyframe prompt or a character/keyframe image path.`);
+      progress?.set(`Film ${label}: generating Pony keyframe…`, pct(8));
+      await createImageForSegmentInCurrentMode(segment, "pony", progress, pct(10), Math.max(1, span * .30), `Film keyframe ${label}`);
+    }
+    const referenceImage = String(segment.character_reference_path || selectedSegmentImagePath(segment) || "").trim();
+    if (useReference && !referenceImage) throw new Error(`${label}: Pony did not produce a usable reference image.`);
+    const targetSeconds = Math.max(.1, Number(segment.target_duration_seconds || 4));
+    const plannedFrames = Math.max(9, Math.round(((Math.round(targetSeconds * fps) + 1) - 1) / 8) * 8 + 1);
+    segment.planned_frames = plannedFrames;
+    segment.target_duration_seconds = (plannedFrames - 1) / fps;
+    const payload = {
+      ...i2vVideoSettingsPayload(segment),
+      i2v_model_profile: I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8,
+      fps,
+      scene_number: sceneNumber,
+      project_folder: String(projectInput.value || state.projectFolder || "").trim(),
+      unified_ltx_prompt: unifiedPrompt,
+      target_duration_seconds: segment.target_duration_seconds,
+      planned_frames: plannedFrames,
+      film_render_mode: useReference ? "i2v_t2av" : "t2av",
+      reference_image_path: referenceImage,
+      pass1_inplace_bypass: !useReference,
+      pass2_inplace_bypass: !useReference,
+    };
+    progress?.set(`Film ${label}: preparing isolated LTX native-audio workflow…`, pct(42));
+    const built = await postJson("/vrgdg/script_to_film/build_t2av_prompt", payload, 120000);
+    const renderStartedAt = Date.now() / 1000 - 2;
+    const queued = await queueWorkflowPrompt(built.prompt);
+    const promptId = queued?.prompt_id;
+    if (!promptId) throw new Error("ComfyUI queued the Film scene but did not return a prompt ID.");
+    progress?.set(`Film ${label}: waiting for LTX video and generated native audio…\nPrompt ID: ${promptId}`, pct(58));
+    const videos = await waitForVideos(
+      promptId,
+      (message) => progress?.set(`Film ${label}: ${message}`, pct(78)),
+      () => state.batchCancelled,
+      async () => {
+        const found = await postJson("/vrgdg/workflow_runner/find_scene_video_output", {
+          project_folder: payload.project_folder,
+          video_mode: "script_to_film",
+          output_folder: built.output_folder,
+          scene_number: sceneNumber,
+          min_mtime: renderStartedAt,
+        }, 30000);
+        return found.video_path || "";
+      },
+    );
+    const videoPath = resolveComfyVideoPath(videos[videos.length - 1] || null);
+    if (!videoPath) throw new Error(`${label}: the Film workflow completed but no video output was found.`);
+    progress?.set(`Film ${label}: collecting native-audio clip and reflowing timeline…`, pct(90));
+    const collected = await postJson("/vrgdg/workflow_runner/collect_scene_video", {
+      source_path: videoPath,
+      project_folder: payload.project_folder,
+      scene_number: sceneNumber,
+      existing_action: options.existingVideoAction || "overwrite",
+    }, 120000);
+    const finalVideoPath = collected.video_path || videoPath;
+    segment.rendered_video_path = finalVideoPath;
+    const reflow = await postJson("/vrgdg/script_to_film/measure_and_reflow", {
+      fps,
+      scenes: state.segments,
+      scene_id: segment.id,
+      scene_number: sceneNumber,
+      video_path: finalVideoPath,
+    }, 60000);
+    mergeScriptToFilmTimeline(reflow.scenes);
+    segment.video_output = videos[videos.length - 1] || null;
+    segment.video_source_path = videoPath;
+    segment.video_folder = collected.video_folder || collectedSceneVideoFolder();
+    segment.video_status = "done";
+    segment.preview_mode = "video";
+    activateSegmentVideoPath(segment, finalVideoPath, collected.thumbnail_path || "");
+    segment.video_cache_bust = Date.now();
+    syncPreview(segment);
+    render();
+    await autoSaveSessionQuiet(`Film scene ${sceneNumber} native-audio render complete`);
+    progress?.set(`Film ${label}: ready (${Number(reflow.measured_duration_seconds || segment.target_duration_seconds).toFixed(2)} seconds); later scenes reflowed.`, pct(100));
+    return finalVideoPath;
+  }
+
+  async function buildScriptToFilmPipeline(options = {}) {
+    setScriptToFilmMode("script_to_film", "build");
+    updateActiveFromInputs();
+    saveI2VVideoSettingsFromPanel();
+    const projectFolder = String(projectInput.value || state.projectFolder || "").trim();
+    if (!projectFolder) throw new Error("Choose a project folder before building a Script-to-Film project.");
+    if (!state.segments.length) throw new Error("Create a Script-to-Film scene plan before building.");
+    const force = options.buildMode === "fresh_rebuild" || options.buildMode === "redo_videos";
+    const targets = state.segments.filter((segment) => force || !String(selectedSegmentVideoPath(segment) || "").trim());
+    const progress = createProgressWindow("Building Script-to-Film");
+    try {
+      state.batchCancelled = false;
+      for (let index = 0; index < targets.length; index += 1) {
+        assertBatchNotStopped();
+        const segment = targets[index];
+        const sceneIndex = state.segments.indexOf(segment);
+        const base = (index / Math.max(1, targets.length)) * 88;
+        const span = 88 / Math.max(1, targets.length);
+        await renderScriptToFilmScene(segment, sceneIndex, progress, {
+          progressBase: base,
+          progressSpan: span,
+          existingVideoAction: force ? "backup" : "overwrite",
+        });
+      }
+      assertBatchNotStopped();
+      progress.set("Stitching Film clips with their embedded LTX native audio…", 92);
+      const stitch = await postJson("/vrgdg/script_to_film/stitch_native_audio", {
+        project_folder: projectFolder,
+        scenes: state.segments,
+        width: Number(state.i2vVideoSettings?.width || 1280),
+        height: Number(state.i2vVideoSettings?.height || 720),
+        optional_music_bed_path: String(state.segments.find((scene) => scene.optional_music_bed_path)?.optional_music_bed_path || ""),
+        ducking_level: Number(state.segments.find((scene) => scene.optional_music_bed_path)?.ducking_level ?? .25),
+        output_prefix: "SCRIPT_TO_FILM",
+      }, 600000);
+      await autoSaveSessionQuiet("Script-to-Film build complete");
+      progress.set(`Script-to-Film complete.\n${stitch.final_video_path}`, 100);
+      progress.close(5000);
+      toast(`Script-to-Film complete.\n${stitch.final_video_path}`);
+      return stitch;
+    } catch (error) {
+      progress.set(`Script-to-Film stopped:\n${String(error?.message || error)}`, 100);
+      throw error;
+    }
+  }
+
   async function renderSceneVideoWithProgress(segment, sceneIndex, progress, options = {}) {
+    if (isScriptToFilmMode()) return renderScriptToFilmScene(segment, sceneIndex, progress, options);
     const progressBase = Number(options.progressBase ?? 0);
     const progressSpan = Number(options.progressSpan ?? 100);
     const batchLabel = options.batchLabel ? `${options.batchLabel}\n` : "";
@@ -33283,6 +33543,24 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     const info = segmentIndexInfo(segment);
     const sceneIndex = info.index;
     if (sceneIndex < 0) return;
+    if (isScriptToFilmMode()) {
+      let filmProgress = null;
+      try {
+        state.batchCancelled = false;
+        setButtonGroupState(createSceneVideoButtons, { disabled: true, text: "Creating…" });
+        filmProgress = createProgressWindow("Creating Script-to-Film scene");
+        const videoPath = await renderScriptToFilmScene(segment, sceneIndex, filmProgress, { existingVideoAction: "backup" });
+        filmProgress.close(900);
+        toast(`Film scene ready:\n${videoPath}`);
+      } catch (error) {
+        segment.video_status = "error";
+        filmProgress?.set(`Error:\n${String(error?.message || error)}`, 100);
+        toast(String(error?.message || error), true);
+      } finally {
+        setButtonGroupState(createSceneVideoButtons, { disabled: false, text: "Create Scene Video" });
+      }
+      return;
+    }
     const idLoraMode = currentVideoMode() === "id_lora";
     if (!idLoraMode && !(await ensureAudioOrOfferSilentTimeline({ segment }))) return;
     const missing = [
@@ -33486,6 +33764,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   }
 
   async function renderAllScenes(options = {}) {
+    if (isScriptToFilmMode()) return buildScriptToFilmPipeline({
+      buildMode: options.forceVideos ? "redo_videos" : "resume_missing",
+    });
     updateActiveFromInputs();
     saveI2VVideoSettingsFromPanel();
     const forceVideos = Boolean(options.forceVideos);
@@ -39207,6 +39488,10 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   }
 
   async function confirmAndRunFullBuild() {
+    if (isScriptToFilmMode()) {
+      await buildScriptToFilmPipeline({ buildMode: "resume_missing" });
+      return;
+    }
     const videoMode = currentVideoMode();
     const t2vMode = videoMode === "t2v";
     const rtvMode = videoMode === "rtv";
@@ -39283,6 +39568,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   }
 
   function openWizardFromBuilder() {
+    const setWizardProjectMode = (mode) => setScriptToFilmMode(mode, "wizard mode change");
     const setWizardVideoMode = (mode) => {
       const normalized = String(mode || "").trim().toLowerCase();
       const allowed = ["i2v", "id_lora", "rtv", "t2v", "ingredients"];
@@ -39961,6 +40247,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         ...wizardOptionsFromSelect(i2vGemmaModelSelect),
       ]));
       return {
+        projectMode: state.projectMode || "music_video",
+        scriptToFilm: state.scriptToFilm || {},
         projectFolder: String(projectInput.value || state.projectFolder || "").trim(),
         audioPath: String(audioInput.value || state.audioPath || "").trim(),
         wizardFolder: String(projectInput.value || state.projectFolder || "").trim() ? `${String(projectInput.value || state.projectFolder || "").trim()}\\wizard` : "",
@@ -40109,6 +40397,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     };
     openMusicVideoWizard({
       snapshot: wizardSnapshot,
+      setProjectMode: setWizardProjectMode,
+      openScriptToFilmPlanner: openScriptToFilmPlannerFromBuilder,
       setVideoMode: setWizardVideoMode,
       setImageMode: setWizardImageMode,
       chooseAudioFile: chooseProjectAudioFile,

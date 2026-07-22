@@ -25,6 +25,7 @@ _VRGDG_SUBMODULES = (
     ".VRGDG_VoxCPM2Node",
     ".VRGDG_VideoEditorNodes",
     ".VRGDG_WorkflowRunnerNodes",
+    ".VRGDG_ScriptToFilmNodes",
     ".VRGDG_MusicVideoBuilderNodes",
     ".VRGDG_StoryboardBuilderNodes",
     ".VRGDG_MusicVideoPromptCreatorNodes",

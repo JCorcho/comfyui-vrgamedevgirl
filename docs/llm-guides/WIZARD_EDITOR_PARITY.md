@@ -9,6 +9,7 @@ Treat the normal Builder editor and the Video Wizard as two views of the same pr
 - `web/VRGDG_MusicVideoWizardUI.js` only renders controls and returns a settings object.
 - `applyWizardSettings()` assigns those values to the editor controls, calls `saveI2VVideoSettingsFromPanel()`, and saves the project. It is the single Wizard-to-editor handoff.
 - Backend workflow patches in `VRGDG_WorkflowRunnerNodes.py` remain the single renderer. Do not add a Wizard-only workflow runner.
+- Script-to-Film is the exception to the settings-form handoff: both surfaces open the same `web/VRGDG_ScriptToFilmUI.js` planner. That planner returns its plan only through the Builder callback, which persists `project_mode`, `script_to_film`, and the shared `segments` data before invoking the Film backend. It is still one renderer, not a Wizard-only route.
 
 ## Required checklist for a new setting
 
@@ -28,6 +29,7 @@ Treat the normal Builder editor and the Video Wizard as two views of the same pr
 | Local text LLM selection | `text_gemma_model`, `vision_gemma_model`, and `mmproj_file`; Editor and Wizard use the shared setters in `VRGDG_MusicVideoBuilderUI.js`, and Prompt Creator persists `text_gemma_model` in its draft. See `PROMPT_CREATOR_LLM_SELECTION.md`. |
 | Violets LTX 2.3 FP8 | `i2v_model_profile`, `violets_ltx23_checkpoint_name`, `ltx_audio_text_encoder_name`; backend injects DMD `1.0` and JoyAI `0.5`. |
 | Two-pass I2V sampling | `pass1_sampler_name`, `pass1_sigmas`, `pass2_sampler_name`, `pass2_sigmas`. |
+| Script-to-Film | `project_mode: "script_to_film"`, `script_to_film`, and Film fields on the normal `segments` records. Builder and Wizard open the same Film planner; it dispatches `/vrgdg/script_to_film/*`, which uses a dedicated native-audio template rather than Music Video audio/SRT routes. See `SCRIPT_TO_FILM_IMPLEMENTATION.md`. |
 | Adaptive local-workflow execution | No persisted UI setting. Both surfaces enter `zImageAllScenes(...)`, which uses the shared adaptive residency/queue manager. See `ADAPTIVE_VRAM_EXECUTION_MANAGER.md`. |
 
 Do not represent mandatory model adapters as optional Wizard LoRA controls. Put their enforcement in the backend profile patch and show their locked status in both UI surfaces.
