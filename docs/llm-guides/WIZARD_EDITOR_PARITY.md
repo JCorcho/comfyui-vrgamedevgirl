@@ -30,6 +30,7 @@ Treat the normal Builder editor and the Video Wizard as two views of the same pr
 | Violets LTX 2.3 FP8 | `i2v_model_profile`, `violets_ltx23_checkpoint_name`, `ltx_audio_text_encoder_name`; backend injects DMD `1.0` and JoyAI `0.5`. |
 | Two-pass I2V sampling | `pass1_sampler_name`, `pass1_sigmas`, `pass2_sampler_name`, `pass2_sigmas`. |
 | Script-to-Film | `project_mode: "script_to_film"`, `script_to_film`, and Film fields on the normal `segments` records. Builder and Wizard open the same Film planner; it dispatches `/vrgdg/script_to_film/*`, which uses a dedicated native-audio template rather than Music Video audio/SRT routes. See `SCRIPT_TO_FILM_IMPLEMENTATION.md`. |
+| Script-to-Film Prompt Creator model | `script_to_film.prompt_creator_model`. Builder and Wizard both open the same Planner control; its selected GGUF is mirrored to the shared text-model selector and sent as the Film request's `model_file`. The Film backend capacity guard prevents an impossible full-GPU local model load from becoming a browser 502. |
 | Adaptive local-workflow execution | No persisted UI setting. Both surfaces enter `zImageAllScenes(...)`, which uses the shared adaptive residency/queue manager. See `ADAPTIVE_VRAM_EXECUTION_MANAGER.md`. |
 
 Do not represent mandatory model adapters as optional Wizard LoRA controls. Put their enforcement in the backend profile patch and show their locked status in both UI surfaces.

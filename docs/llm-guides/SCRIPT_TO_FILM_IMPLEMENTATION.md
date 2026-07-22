@@ -5,7 +5,7 @@ This guide is the handoff document for the non-music **Script-to-Film** mode. It
 ## Contract
 
 - Persisted project switch: `project_mode: "music_video" | "script_to_film"`.
-- Persisted Film configuration: `script_to_film`, including `script`, `fps`, and `default_target_duration_seconds`.
+- Persisted Film configuration: `script_to_film`, including `script`, `fps`, `default_target_duration_seconds`, and the authoritative local/remote `prompt_creator_model` selection.
 - A Film project uses `image_model_mode: "pony"` for its optional keyframes and the backend-enforced `violets_ltx23_fp8` LTX profile for video/audio.
 - The Film profile label is **Film/T2AV + Character Ref**. It uses direct LTX I2V reference conditioning because IP-Adapter and InstantID nodes are not installed on this machine. Do not add unavailable node types merely to display a feature label.
 - The backend locks `LTX2.3_DMD_reshaped_r256.safetensors` at `1.0` and `JoyAI-Echo-content_r256.safetensors` at `0.5`; these are not optional UI LoRAs.
@@ -71,6 +71,12 @@ The local Prompt Creator contract does **not** require an LLM to fabricate Build
 `mergeScriptToFilmTimeline` deliberately ignores blank IDs when building its lookup map and falls back to scene position for those legacy records. Without this, four blank IDs collapse into the last map entry and corrupt the post-LLM handoff even though the selected model completed successfully.
 
 Browser-only failures are posted to `POST /vrgdg/script_to_film/client_error` and logged as `[VRGDG Script-to-Film] Planner client error ...`. The report contains only a short stage and error message—never the script or raw LLM completion. This route is diagnostic only; all Builder and Wizard data continues through the same Planner and `applyPlan` path.
+
+### Prompt Creator model ownership and capacity guard
+
+The shared Film Planner now exposes **Film Prompt Creator model** directly in its source card. Select the exact local GGUF (or retain a configured remote runner) there; it is persisted as `script_to_film.prompt_creator_model`, sent as `model_file`, and mirrored back to the shared Builder text-model setting. This Planner is the same component opened from Builder and Wizard, so the selection cannot depend on whether a Wizard settings form was separately applied.
+
+For local GPU-offloaded GGUFs, the Film backend estimates the model file, runtime, context, and safety reserve before loading. A model whose full GPU-offload requirement exceeds the installed card fails immediately with a clear capacity message; it must never be loaded until ComfyUI becomes memory-starved and returns an opaque 502. A large model can still be used deliberately after lowering GPU layers in the shared LLM settings, while the smaller Qwen profile is the appropriate test choice on this 16 GiB GPU.
 
 ## Film graph construction
 

@@ -97,6 +97,16 @@ function ensureStableSceneIds(scenes) {
   });
 }
 
+function promptCreatorModelChoices(state) {
+  const choices = [
+    state?.scriptToFilm?.prompt_creator_model,
+    state?.scriptToFilm?.last_prompt_creator_model,
+    state?.textGemmaModel,
+    ...(Array.isArray(state?.textGemmaModels) ? state.textGemmaModels : []),
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  return Array.from(new Set(choices));
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
@@ -150,6 +160,14 @@ export function openScriptToFilmPlanner(config) {
   state.scriptToFilm = state.scriptToFilm || {};
   state.scriptToFilm.fps = Number(state.scriptToFilm.fps || 25);
   state.scriptToFilm.script = String(state.scriptToFilm.script || "");
+  const promptCreatorModels = promptCreatorModelChoices(state);
+  state.scriptToFilm.prompt_creator_model = String(
+    state.scriptToFilm.prompt_creator_model
+    || state.scriptToFilm.last_prompt_creator_model
+    || state.textGemmaModel
+    || promptCreatorModels[0]
+    || "",
+  ).trim();
   state.segments = Array.isArray(state.segments) ? state.segments : [];
   const backdrop = document.createElement("div");
   backdrop.className = "vrgdg-film-backdrop";
@@ -193,6 +211,10 @@ export function openScriptToFilmPlanner(config) {
     sourceGrid.append(
       field("Frame rate", state.scriptToFilm.fps, (value) => { state.scriptToFilm.fps = Math.max(1, Math.min(120, Number(value || 25))); apply("Frame rate updated; durations will snap on reflow."); }, { type: "number" }),
       field("Default shot duration (seconds)", state.scriptToFilm.default_target_duration_seconds || 4, (value) => { state.scriptToFilm.default_target_duration_seconds = Math.max(.1, Number(value || 4)); }, { type: "number" }),
+      field("Film Prompt Creator model", state.scriptToFilm.prompt_creator_model, (value) => {
+        state.scriptToFilm.prompt_creator_model = String(value || "").trim();
+        apply(`Film Prompt Creator model set to ${state.scriptToFilm.prompt_creator_model || "none"}.`);
+      }, { select: promptCreatorModels.map((model) => ({ value: model, label: model })) }),
       field("Keyframe image mode", "pony", () => {}, { select: [{ value: "pony", label: "Pony (VioletsT2I)" }] }),
       field("LTX profile", "film_t2av_character_ref", () => {}, { select: [{ value: "film_t2av_character_ref", label: "Film/T2AV + Character Ref" }] }),
     );
@@ -204,11 +226,15 @@ export function openScriptToFilmPlanner(config) {
     create.onclick = async () => {
       try {
         create.disabled = true;
-        status.textContent = "The selected Prompt Creator model is planning Film scenes…";
+        const selectedModel = String(state.scriptToFilm.prompt_creator_model || state.textGemmaModel || "").trim();
+        if (!selectedModel && !["lm_studio", "llm_api"].includes(String(state.text_gemma_runner || "builtin"))) {
+          throw new Error("Choose a Film Prompt Creator model before creating Film scenes.");
+        }
+        status.textContent = `The selected Film Prompt Creator model is planning Film scenes: ${selectedModel || state.text_gemma_runner}…`;
         const plan = await requestJson("/vrgdg/script_to_film/create_prompt_plan", "POST", {
           script: state.scriptToFilm.script,
           fps: state.scriptToFilm.fps,
-          model_file: state.textGemmaModel || "",
+          model_file: selectedModel,
           llm_settings: state.llmSettings || {},
           text_gemma_runner: state.text_gemma_runner || "builtin",
           lm_studio_base_url: state.lm_studio_base_url || "",
@@ -219,7 +245,7 @@ export function openScriptToFilmPlanner(config) {
         });
         if (!Array.isArray(plan?.scenes) || !plan.scenes.length) throw new Error("The Prompt Creator returned no Film scenes.");
         state.segments = ensureStableSceneIds(plan.scenes);
-        state.scriptToFilm.last_prompt_creator_model = plan.used_model || state.textGemmaModel || "";
+        state.scriptToFilm.last_prompt_creator_model = plan.used_model || selectedModel;
         state.scriptToFilm.system_prompt_path = plan.system_prompt_path || "";
         const recovery = String(plan.recovery_message || "").trim();
         try {

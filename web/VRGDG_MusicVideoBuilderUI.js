@@ -11,7 +11,7 @@ import {
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
 import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260721-script-to-film";
-import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-film-plan-ids";
+import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-film-prompt-model";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
@@ -32968,6 +32968,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       ...(plan.script_to_film || {}),
       fps: Math.max(1, Math.min(120, Number(plan.fps || plan.script_to_film?.fps || scriptToFilmFps()))),
     };
+    const filmPromptCreatorModel = String(state.scriptToFilm.prompt_creator_model || "").trim();
+    if (filmPromptCreatorModel) setSharedTextGemmaModel(filmPromptCreatorModel);
     if (Array.isArray(plan.scenes)) state.segments = plan.scenes;
     mergeScriptToFilmTimeline(plan.scenes || state.segments);
     if (state.segments.length) state.activeId = state.segments[0].id;
@@ -32986,6 +32988,10 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         scriptToFilm: state.scriptToFilm,
         segments: state.segments,
         textGemmaModel: state.textGemmaModel || i2vTextGemmaModelSelect.value || t2iTextGemmaModelSelect.value || "",
+        textGemmaModels: Array.from(new Set([
+          ...Array.from(t2iTextGemmaModelSelect.options || []).map((option) => String(option.value || "").trim()),
+          ...Array.from(i2vTextGemmaModelSelect.options || []).map((option) => String(option.value || "").trim()),
+        ].filter(Boolean))),
         llmSettings: {
           n_ctx: state.gemmaContextLimit,
           n_gpu_layers: state.gemmaGpuLayers,
@@ -39724,6 +39730,12 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       });
       if (String(settings.text_gemma_model || "").trim()) {
         setSharedTextGemmaModel(settings.text_gemma_model);
+        if (isScriptToFilmMode()) {
+          state.scriptToFilm = {
+            ...(state.scriptToFilm || {}),
+            prompt_creator_model: String(settings.text_gemma_model).trim(),
+          };
+        }
       }
       if (String(settings.vision_gemma_model || "").trim()) {
         setSharedVisionGemmaModel(settings.vision_gemma_model);

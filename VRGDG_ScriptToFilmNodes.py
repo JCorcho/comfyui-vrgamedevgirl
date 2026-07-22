@@ -305,6 +305,57 @@ def _recovered_scene_from_unstructured_output(script, raw_text):
     }
 
 
+def _validate_film_prompt_creator_capacity(payload):
+    """Reject an impossible all-GPU local GGUF load before it starves ComfyUI.
+
+    The Film Planner normally runs beside ComfyUI's image/video process.  A
+    model selected in a Wizard field can otherwise begin loading, exhaust the
+    shared 16 GiB card, and surface as an opaque browser 502.  This only
+    preflights the local builtin runner; remote runners retain their own
+    capacity management.
+    """
+    runner = _safe_text(payload.get("text_gemma_runner", payload.get("text_runner", "builtin")), 80).lower() or "builtin"
+    if runner != "builtin":
+        return
+    selected_model = _safe_text(payload.get("model_file", payload.get("text_gemma_model", "")), 4096)
+    if not selected_model:
+        return
+    settings = payload.get("llm_settings") if isinstance(payload.get("llm_settings"), dict) else {}
+    n_ctx = max(512, int(_finite_number(settings.get("n_ctx", 8192), 8192)))
+    n_gpu_layers = int(_finite_number(settings.get("n_gpu_layers", 99), 99))
+    if n_gpu_layers <= 0:
+        return
+    try:
+        import torch
+        from .LLM import VRGDG_SuperGemmaGGUFChat
+
+        if not torch.cuda.is_available():
+            return
+        resolver = VRGDG_SuperGemmaGGUFChat()
+        model_path = resolver._resolve_dropdown_path(selected_model, resolver.MISSING_MODEL_OPTION)
+        model_bytes = int(os.path.getsize(model_path))
+        total_bytes = int(torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory)
+    except Exception:
+        # The LLM loader supplies the normal detailed error if model discovery
+        # itself fails. Never turn a diagnostic preflight failure into a false
+        # model-selection failure.
+        return
+
+    mib = 1024 * 1024
+    gib = 1024 * mib
+    runtime_allowance = max(512 * mib, int(model_bytes * 0.08))
+    context_allowance = max(128 * mib, min(2 * gib, int(n_ctx * 96 * 1024)))
+    safety_reserve = max(gib, int(total_bytes * 0.10))
+    estimated_required = model_bytes + runtime_allowance + context_allowance + safety_reserve
+    if estimated_required > total_bytes:
+        raise ValueError(
+            f"Selected Film Prompt Creator model '{os.path.basename(model_path)}' needs about "
+            f"{estimated_required / (1024 ** 3):.1f} GiB with {n_gpu_layers} GPU layers, but this GPU has "
+            f"{total_bytes / (1024 ** 3):.1f} GiB. Choose the smaller Qwen model for this machine, or lower "
+            "the GPU-layer setting before intentionally running a larger model. The model was not loaded."
+        )
+
+
 def _create_prompt_creator_output(payload):
     script = _safe_text(payload.get("script", payload.get("raw_script", "")), 40000)
     if not script:
@@ -315,6 +366,7 @@ def _create_prompt_creator_output(payload):
     # records, not a one-paragraph prompt. This opt-in leaves Music Video's
     # historical output cleanup untouched.
     runner_payload["preserve_structured_output"] = True
+    _validate_film_prompt_creator_capacity(runner_payload)
     result = _run_text_gemma_custom(
         runner_payload.get("model_file", runner_payload.get("text_gemma_model", "")),
         system_prompt,
