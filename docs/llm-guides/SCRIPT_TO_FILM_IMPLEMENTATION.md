@@ -62,6 +62,8 @@ Script-to-Film calls the shared local LLM runner with `preserve_structured_outpu
 
 The Film route also logs the exception class and error message (never the raw script or model completion) as `[VRGDG Script-to-Film] Prompt Creator failed: ...`, so a failed UI request can be diagnosed from ComfyUI logs later.
 
+If a local model still ignores the JSON contract, the route no longer abandons the plan. It returns one clearly labeled editable recovery scene derived from the supplied script and sets `recovery_message` in the response; the shared Builder/Wizard planner displays that warning. This is a continuity-preserving fallback, not a substitute for a correctly structured LLM plan. Successful and recovered requests are logged with scene count and recovery status only.
+
 ## Film graph construction
 
 Run this after modifying the maintained source I2V graph or the generator:

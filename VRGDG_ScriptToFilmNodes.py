@@ -249,6 +249,44 @@ def _plan_payload(payload):
     }
 
 
+def _recovered_scene_from_unstructured_output(script, raw_text):
+    """Keep Film planning usable when a local model ignores JSON mode.
+
+    This is deliberately a visible, one-scene recovery—not a silent claim that
+    the LLM populated every schema field. It gives the owner an editable plan
+    built from their script rather than discarding an otherwise usable session.
+    """
+    source_text = _safe_text(raw_text, 12000)
+    script_text = _safe_text(script, 12000)
+    prompt_text = source_text if len(source_text) >= 40 else script_text
+    return {
+        "scene_number": 1,
+        "label": "Recovered Film scene",
+        "script_beat": script_text,
+        "keyframe_prompt": prompt_text,
+        "unified_ltx_prompt": prompt_text,
+        "spoken_dialogue": "",
+        "character_bible": {"summary": script_text},
+        "physical_state_progression": "Maintain physical and wardrobe continuity within the shot.",
+        "position_continuity_notes": "Establish the opening positions clearly and preserve them through the shot.",
+        "action_intensity_curve": {"start": "establish", "middle": "develop", "end": "resolve", "peak_moment": "primary action beat", "summary": "Recovered from the supplied script."},
+        "camera_language": "Use a coherent cinematic shot that preserves subject and position continuity.",
+        "sound_design_prompt": "Use location-appropriate ambience and synchronized action sound.",
+        "optional_music_bed_path": "",
+        "ducking_level": 0.25,
+        "transition_ambience_notes": "",
+        "transition_cut_type": "auto",
+        "transition_overlap_seconds": 0.25,
+        "target_duration_seconds": _DEFAULT_TARGET_SECONDS,
+        "planned_frames": 0,
+        "reference_image_path": "",
+        "reference_image_name": "",
+        "film_render_mode": "i2v_t2av",
+        "actual_duration_seconds": 0,
+        "timing_source": "planned",
+    }
+
+
 def _create_prompt_creator_output(payload):
     script = _safe_text(payload.get("script", payload.get("raw_script", "")), 40000)
     if not script:
@@ -266,17 +304,31 @@ def _create_prompt_creator_output(payload):
         runner_payload.get("llm_settings"),
         runner_payload,
     )
-    parsed = _extract_json_object(result.get("text", ""))
-    source_scenes = parsed.get("scenes", parsed.get("film_scenes", [])) if isinstance(parsed, dict) else []
+    recovery_message = ""
+    try:
+        parsed = _extract_json_object(result.get("text", ""))
+        source_scenes = parsed.get("scenes", parsed.get("film_scenes", [])) if isinstance(parsed, dict) else []
+    except Exception as exc:
+        parsed = {}
+        source_scenes = []
+        recovery_message = f"The selected model did not return a JSON scene plan ({type(exc).__name__}); one editable recovery scene was created from your script."
     if not isinstance(source_scenes, list) or not source_scenes:
-        raise ValueError("Script-to-Film Prompt Creator did not return a non-empty 'scenes' JSON list.")
+        source_scenes = [_recovered_scene_from_unstructured_output(script, result.get("text", ""))]
+        if not recovery_message:
+            recovery_message = "The selected model returned JSON without a usable scenes array; one editable recovery scene was created from your script."
     plan = _plan_payload({"fps": payload.get("fps", _DEFAULT_FPS), "scenes": source_scenes})
     plan.update({
         "raw_text": result.get("text", ""),
         "used_model": result.get("used_model", ""),
         "runner": result.get("runner", "builtin"),
         "system_prompt_path": system_path,
+        "recovery_message": recovery_message,
     })
+    print(
+        "[VRGDG Script-to-Film] Prompt Creator completed: "
+        f"scenes={len(plan['scenes'])}, recovered={bool(recovery_message)}, "
+        f"model={plan['used_model'] or 'unknown'}"
+    )
     return plan
 
 

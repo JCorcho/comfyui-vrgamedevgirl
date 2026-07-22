@@ -178,7 +178,8 @@ export function openScriptToFilmPlanner(config) {
         state.segments = plan.scenes;
         state.scriptToFilm.last_prompt_creator_model = plan.used_model || state.textGemmaModel || "";
         state.scriptToFilm.system_prompt_path = plan.system_prompt_path || "";
-        apply(`Created ${plan.scenes.length} duration-snapped Film shots with ${plan.used_model || "the selected model"}.`);
+        const recovery = String(plan.recovery_message || "").trim();
+        apply(`Created ${plan.scenes.length} duration-snapped Film shots with ${plan.used_model || "the selected model"}.${recovery ? ` ${recovery}` : ""}`);
         render();
       } catch (error) {
         status.textContent = `Prompt Creator error: ${String(error?.message || error)}`;
