@@ -58,7 +58,7 @@ It must include exactly one `# [GROK_EXPAND_SYSTEM_PROMPT_START]` and one `# [GR
 
 ### Structured-output safeguard
 
-Script-to-Film calls the shared local LLM runner with `preserve_structured_output: true`. The legacy Music Video path intentionally keeps only the first output paragraph because it normally consumes a single prompt; that cleanup corrupts multi-scene JSON if a model separates scene records with blank lines. The opt-in is inserted only by `_create_prompt_creator_output` and is forwarded by `_run_text_gemma_custom` to `VRGDG_SuperGemmaGGUFChat`. The base LLM runner skips its one-paragraph cleanup only when this explicit flag is present. Do not make this the default: Music Video behavior must remain unchanged.
+Script-to-Film calls the shared local LLM runner with `preserve_structured_output: true`. The legacy Music Video path intentionally keeps only the first output paragraph because it normally consumes a single prompt; that cleanup corrupts multi-scene JSON if a model separates scene records with blank lines. The opt-in is inserted only by `_create_prompt_creator_output` and is forwarded by `_run_text_gemma_custom` to `VRGDG_SuperGemmaGGUFChat`. The base LLM runner skips its one-paragraph cleanup only when this explicit flag is present. For local GGUF models, it also enables llama.cpp's `response_format: {"type": "json_object"}` so the model cannot wrap the requested scene object in conversational prose. Do not make this the default: Music Video behavior must remain unchanged.
 
 The Film route also logs the exception class and error message (never the raw script or model completion) as `[VRGDG Script-to-Film] Prompt Creator failed: ...`, so a failed UI request can be diagnosed from ComfyUI logs later.
 

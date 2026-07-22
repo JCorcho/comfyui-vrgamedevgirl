@@ -3518,6 +3518,7 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
         max_new_tokens: int,
         system_prompt: str = "",
         seed: Optional[int] = None,
+        structured_json: bool = False,
     ) -> str:
         kwargs = {}
         if seed is not None:
@@ -3530,11 +3531,23 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
             "stop": list(self._GEMMA_STOP_SEQUENCES),
             **kwargs,
         }
+        # llama.cpp's JSON mode constrains the completion at generation time.
+        # Prompt instructions remain in the caller-owned system prompt; this
+        # only prevents a chat model from wrapping the requested JSON in prose.
+        if structured_json:
+            call_args["response_format"] = {"type": "json_object"}
         try:
             response = model.create_chat_completion(**call_args)
         except TypeError:
             call_args.pop("seed", None)
-            response = model.create_chat_completion(**call_args)
+            try:
+                response = model.create_chat_completion(**call_args)
+            except TypeError:
+                # Older llama-cpp-python builds may not expose response_format.
+                # Fall back to the prompt-only contract rather than breaking
+                # every local model on those installations.
+                call_args.pop("response_format", None)
+                response = model.create_chat_completion(**call_args)
         return self._extract_gguf_text(response)
 
     def _run_gguf_vision_pipeline(
@@ -3642,6 +3655,7 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
                     temperature,
                     top_p,
                     max_new_tokens,
+                    structured_json=bool(kwargs.get("preserve_structured_output", False)),
                 )
             text = str(text or "").strip()
             # Keep complete JSON scene arrays for callers that explicitly opt
