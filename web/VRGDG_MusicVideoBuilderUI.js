@@ -11,7 +11,7 @@ import {
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
 import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260721-script-to-film";
-import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260721-script-to-film";
+import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-film-plan-ids";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
@@ -32923,9 +32923,15 @@ Chrome vault corridor = Sealed industrial passage...</pre>
 
   function mergeScriptToFilmTimeline(reflowedScenes) {
     if (!Array.isArray(reflowedScenes)) return;
-    const byId = new Map(reflowedScenes.map((scene) => [String(scene?.id || ""), scene]));
+    // Plans created by older builds or imported externally can contain blank
+    // IDs. Do not let every blank ID resolve to the final scene in the map;
+    // those records must reconcile by their stable array position instead.
+    const byId = new Map(reflowedScenes
+      .filter((scene) => String(scene?.id || "").trim())
+      .map((scene) => [String(scene.id).trim(), scene]));
     state.segments.forEach((segment, index) => {
-      const reflowed = byId.get(String(segment?.id || "")) || reflowedScenes[index];
+      const segmentId = String(segment?.id || "").trim();
+      const reflowed = (segmentId ? byId.get(segmentId) : null) || reflowedScenes[index];
       if (reflowed && typeof reflowed === "object") Object.assign(segment, reflowed);
     });
     state.duration = Math.max(0, ...state.segments.map((segment) => Number(segment.end || 0)));

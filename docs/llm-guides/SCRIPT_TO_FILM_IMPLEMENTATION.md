@@ -64,6 +64,14 @@ The Film route also logs the exception class and error message (never the raw sc
 
 If a local model still ignores the JSON contract, the route no longer abandons the plan. It returns one clearly labeled editable recovery scene derived from the supplied script and sets `recovery_message` in the response; the shared Builder/Wizard planner displays that warning. This is a continuity-preserving fallback, not a substitute for a correctly structured LLM plan. Successful and recovered requests are logged with scene count and recovery status only.
 
+### Planner handoff safeguards
+
+The local Prompt Creator contract does **not** require an LLM to fabricate Builder-internal `id` values. `_normalize_scene` therefore assigns a deterministic `film_scene_####` ID before every response leaves the server, and `_reflow_scenes` suffixes any duplicate external IDs. The shared Planner repeats the same lightweight validation before handing a plan to the Builder/Wizard, so an older server response or manually imported plan cannot reintroduce blank/duplicate IDs.
+
+`mergeScriptToFilmTimeline` deliberately ignores blank IDs when building its lookup map and falls back to scene position for those legacy records. Without this, four blank IDs collapse into the last map entry and corrupt the post-LLM handoff even though the selected model completed successfully.
+
+Browser-only failures are posted to `POST /vrgdg/script_to_film/client_error` and logged as `[VRGDG Script-to-Film] Planner client error ...`. The report contains only a short stage and error message—never the script or raw LLM completion. This route is diagnostic only; all Builder and Wizard data continues through the same Planner and `applyPlan` path.
+
 ## Film graph construction
 
 Run this after modifying the maintained source I2V graph or the generator:
@@ -90,6 +98,7 @@ The builder starts from `Singlei2vForUI_API.json`, then makes these structural s
 | `GET /vrgdg/script_to_film/config` | Live contract/template check. |
 | `POST /vrgdg/script_to_film/plan` | Normalize fields and duration/frame plan without writing. |
 | `POST /vrgdg/script_to_film/create_prompt_plan` | Run selected Prompt Creator model with the dedicated system file. |
+| `POST /vrgdg/script_to_film/client_error` | Record a sanitized browser-only Planner failure in ComfyUI logs. |
 | `POST /vrgdg/script_to_film/save_plan` | Persist `script_to_film/film_scene_plan.json` under the project folder. |
 | `POST /vrgdg/script_to_film/build_t2av_prompt` | Produce the isolated API graph with Violets LTX loader/LoRA enforcement. |
 | `POST /vrgdg/script_to_film/measure_and_reflow` | Probe actual clip duration and return the updated full scene timeline. |

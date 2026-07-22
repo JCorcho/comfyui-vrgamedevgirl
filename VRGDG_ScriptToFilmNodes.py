@@ -169,6 +169,12 @@ def _normalize_intensity(value):
 
 def _normalize_scene(raw_scene, index, fps):
     source = raw_scene if isinstance(raw_scene, dict) else {}
+    scene_number = max(1, int(_finite_number(source.get("scene_number", index + 1), index + 1)))
+    # Local LLMs are not asked to invent an internal Builder identifier.  Give
+    # every normalized scene a deterministic ID before it crosses the API/UI
+    # boundary, so Builder timeline reconciliation never treats several scenes
+    # as one blank-keyed record.
+    scene_id = _safe_text(source.get("id", ""), 180) or f"film_scene_{scene_number:04d}"
     requested_duration = source.get("target_duration_seconds", source.get("duration_seconds", _DEFAULT_TARGET_SECONDS))
     planned_frames = _valid_frames(source.get("planned_frames"))
     frame_plan = _frame_plan(requested_duration, fps)
@@ -180,8 +186,8 @@ def _normalize_scene(raw_scene, index, fps):
         render_mode = "i2v_t2av"
     ducking = max(0.0, min(1.0, _finite_number(source.get("ducking_level", 0.25), 0.25)))
     record = {
-        "id": _safe_text(source.get("id", ""), 180),
-        "scene_number": max(1, int(_finite_number(source.get("scene_number", index + 1), index + 1))),
+        "id": scene_id,
+        "scene_number": scene_number,
         "label": _safe_text(source.get("label", source.get("title", f"Film scene {index + 1}")), 500),
         "script_beat": _safe_text(source.get("script_beat", source.get("story_beat", "")), 6000),
         "keyframe_prompt": _safe_text(source.get("keyframe_prompt", source.get("t2i_prompt", source.get("image_prompt", ""))), 8000),
@@ -222,9 +228,21 @@ def _reflow_scenes(raw_scenes, fps):
     if not isinstance(raw_scenes, list):
         raise ValueError("Script-to-Film scenes must be a list.")
     scenes = []
+    seen_scene_ids = set()
     cursor = 0.0
     for index, source in enumerate(raw_scenes):
         scene = _normalize_scene(source, index, fps)
+        # An externally authored plan can still reuse a scene_number or ID.
+        # Preserve its first ID and make later duplicates deterministic rather
+        # than allowing ambiguous Builder-side scene merging.
+        base_id = scene["id"] or f"film_scene_{index + 1:04d}"
+        scene_id = base_id
+        duplicate_number = 2
+        while scene_id in seen_scene_ids:
+            scene_id = f"{base_id}_{duplicate_number}"
+            duplicate_number += 1
+        scene["id"] = scene_id
+        seen_scene_ids.add(scene_id)
         duration = scene["actual_duration_seconds"] or scene["target_duration_seconds"]
         scene["start"] = cursor
         scene["end"] = cursor + duration
@@ -607,6 +625,18 @@ def _ensure_routes():
             # modal has been closed. Do not log raw scripts or model output.
             print(f"[VRGDG Script-to-Film] Prompt Creator failed: {type(exc).__name__}: {exc}")
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/client_error")
+    async def script_to_film_client_error(request):
+        """Record a browser-only Planner failure without exposing project text."""
+        try:
+            payload = await request.json()
+            stage = _safe_text(payload.get("stage", "unknown"), 160)
+            message = _safe_text(payload.get("message", "unknown"), 2000)
+            print(f"[VRGDG Script-to-Film] Planner client error at {stage}: {message}")
+        except Exception as exc:
+            print(f"[VRGDG Script-to-Film] Planner client-error report failed: {type(exc).__name__}: {exc}")
+        return web.json_response({"ok": True})
 
     @server.routes.post("/vrgdg/script_to_film/save_plan")
     async def script_to_film_save_plan(request):

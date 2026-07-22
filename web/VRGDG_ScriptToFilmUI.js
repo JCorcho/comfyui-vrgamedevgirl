@@ -57,6 +57,46 @@ async function requestJson(path, method = "GET", payload = null) {
   return data;
 }
 
+function errorMessage(error) {
+  const name = String(error?.name || "").trim();
+  const message = String(error?.message || error || "Unknown browser error").trim();
+  return `${name && name !== "Error" ? `${name}: ` : ""}${message}`.slice(0, 2000);
+}
+
+async function reportClientError(stage, error) {
+  const message = errorMessage(error);
+  console.error(`[VRGDG Script-to-Film] ${stage}`, error);
+  try {
+    await api.fetchApi("/vrgdg/script_to_film/client_error", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Never send the script or LLM response in diagnostic telemetry.
+      body: JSON.stringify({ stage: String(stage || "unknown").slice(0, 160), message }),
+    });
+  } catch (reportingError) {
+    console.warn("[VRGDG Script-to-Film] Could not report Planner client error", reportingError);
+  }
+  return message;
+}
+
+function ensureStableSceneIds(scenes) {
+  const seen = new Set();
+  return (Array.isArray(scenes) ? scenes : []).map((scene, index) => {
+    const target = scene && typeof scene === "object" ? scene : {};
+    const sceneNumber = Math.max(1, Number(target.scene_number || index + 1) || index + 1);
+    const baseId = String(target.id || "").trim() || `film_scene_${String(sceneNumber).padStart(4, "0")}`;
+    let sceneId = baseId;
+    let duplicateNumber = 2;
+    while (seen.has(sceneId)) {
+      sceneId = `${baseId}_${duplicateNumber}`;
+      duplicateNumber += 1;
+    }
+    target.id = sceneId;
+    seen.add(sceneId);
+    return target;
+  });
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
@@ -132,13 +172,15 @@ export function openScriptToFilmPlanner(config) {
   header.append(Object.assign(document.createElement("div"), { className: "vrgdg-film-title", textContent: "Script-to-Film Planner" }), Object.assign(document.createElement("div"), { className: "vrgdg-film-subtitle", textContent: "Duration-first T2I → LTX native-audio shots. This is a separate film pipeline; Music Video settings are not changed." }), status, close);
 
   const apply = (message = "Film plan ready.") => {
+    if (typeof config.applyPlan !== "function") throw new Error("The Film Planner was opened without a Builder/Wizard handoff.");
+    state.segments = ensureStableSceneIds(state.segments);
     reflowLocally(state.segments, state.scriptToFilm.fps);
-    config.applyPlan?.({ project_mode: "script_to_film", fps: state.scriptToFilm.fps, script_to_film: state.scriptToFilm, scenes: state.segments });
+    config.applyPlan({ project_mode: "script_to_film", fps: state.scriptToFilm.fps, script_to_film: state.scriptToFilm, scenes: state.segments });
     status.textContent = message;
   };
   const syncPlan = async () => {
     const plan = await requestJson("/vrgdg/script_to_film/plan", "POST", { fps: state.scriptToFilm.fps, scenes: state.segments });
-    state.segments = plan.scenes;
+    state.segments = ensureStableSceneIds(plan.scenes);
     apply(`Timeline reflowed: ${Number(plan.total_duration_seconds || 0).toFixed(2)} seconds.`);
   };
   const render = () => {
@@ -175,18 +217,31 @@ export function openScriptToFilmPlanner(config) {
           llm_api_provider: state.llm_api_provider || "",
           llm_api_model: state.llm_api_model || "",
         });
-        state.segments = plan.scenes;
+        if (!Array.isArray(plan?.scenes) || !plan.scenes.length) throw new Error("The Prompt Creator returned no Film scenes.");
+        state.segments = ensureStableSceneIds(plan.scenes);
         state.scriptToFilm.last_prompt_creator_model = plan.used_model || state.textGemmaModel || "";
         state.scriptToFilm.system_prompt_path = plan.system_prompt_path || "";
         const recovery = String(plan.recovery_message || "").trim();
-        apply(`Created ${plan.scenes.length} duration-snapped Film shots with ${plan.used_model || "the selected model"}.${recovery ? ` ${recovery}` : ""}`);
-        render();
+        try {
+          apply(`Created ${plan.scenes.length} duration-snapped Film shots with ${plan.used_model || "the selected model"}.${recovery ? ` ${recovery}` : ""}`);
+          render();
+        } catch (handoffError) {
+          const detail = await reportClientError("applying generated Film plan", handoffError);
+          status.textContent = `Film scenes were created, but the Builder/Wizard handoff failed: ${detail}`;
+        }
       } catch (error) {
-        status.textContent = `Prompt Creator error: ${String(error?.message || error)}`;
+        const detail = await reportClientError("creating Film scenes", error);
+        status.textContent = `Prompt Creator error: ${detail}`;
       } finally { create.disabled = false; }
     };
     const reflow = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Reflow durations" });
-    reflow.onclick = async () => { try { await syncPlan(); render(); } catch (error) { status.textContent = String(error?.message || error); } };
+    reflow.onclick = async () => {
+      try { await syncPlan(); render(); }
+      catch (error) {
+        const detail = await reportClientError("reflowing Film scenes", error);
+        status.textContent = `Film reflow error: ${detail}`;
+      }
+    };
     actions.append(create, reflow);
     source.append(sourceGrid, script, actions, Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Target duration is authoritative. It snaps to LTX’s valid (frames − 1) % 8 = 0 frame rule. Rendered media duration replaces the target duration and shifts every following scene automatically." }));
     body.append(source);
