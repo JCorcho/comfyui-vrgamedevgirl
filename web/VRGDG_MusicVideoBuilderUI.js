@@ -1917,6 +1917,16 @@ function openBuilder(node) {
   const promptCreatorButton = makeButton("Prompt Creator");
   const autoLoadAllButton = makeButton("Import Data From Prompt Creator");
   const importSceneNotesButton = makeButton("Import Scene Notes JSON");
+  const projectModeSelect = document.createElement("select");
+  projectModeSelect.style.cssText = "min-width:148px;border:1px solid #0e7490;border-radius:6px;background:#0f172a;color:#cffafe;padding:7px 9px;font-weight:800;";
+  projectModeSelect.append(
+    new Option("Music Video", "music_video"),
+    new Option("Script-to-Film", "script_to_film"),
+  );
+  const projectModeField = makeField("Project Mode", projectModeSelect);
+  projectModeField.style.minWidth = "170px";
+  const scriptToFilmPlannerButton = makeButton("Film Planner", "primary");
+  scriptToFilmPlannerButton.title = "Open the duration-first Script-to-Film planner. It is separate from Music Video audio and lyric timing.";
   const wizardButton = makeButton("Wizard", "primary");
   const storyboardBuilderButton = makeButton("Storyboard Builder");
   const fluxReferenceBuilderButton = makeButton("Reference Builder");
@@ -1980,7 +1990,7 @@ function openBuilder(node) {
   batchActions.style.display = "none";
   const importActions = document.createElement("div");
   importActions.style.cssText = "display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:nowrap;min-width:0;overflow:visible;";
-  importActions.append(wizardButton, storyboardBuilderButton, fluxReferenceBuilderButton, lyricMapperButton, gemmaRunnerButton, promptOptionsButton);
+  importActions.append(projectModeField, scriptToFilmPlannerButton, wizardButton, storyboardBuilderButton, fluxReferenceBuilderButton, lyricMapperButton, gemmaRunnerButton, promptOptionsButton);
   const centerActions = document.createElement("div");
   centerActions.style.cssText = "display:flex;gap:8px;align-items:center;justify-content:center;min-width:0;overflow:visible;";
   centerActions.append(importActions, batchActions);
@@ -27987,6 +27997,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       syncZEnhanceSettingsPanel();
       syncI2VVideoSettingsPanel();
       syncVideoModePanel();
+      syncProjectModeControl();
       syncInspector();
       render();
       const repairedSegmentIdCount = Number(state.repairedSegmentIdCount || 0);
@@ -32900,6 +32911,12 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     return state.projectMode === "script_to_film";
   }
 
+  function syncProjectModeControl() {
+    projectModeSelect.value = isScriptToFilmMode() ? "script_to_film" : "music_video";
+    scriptToFilmPlannerButton.style.background = isScriptToFilmMode() ? "#0e7490" : "";
+    scriptToFilmPlannerButton.textContent = isScriptToFilmMode() ? "Film Planner (active)" : "Film Planner";
+  }
+
   function scriptToFilmFps() {
     return Math.max(1, Math.min(120, Number(state.scriptToFilm?.fps || 25)));
   }
@@ -32931,6 +32948,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         ...(state.scriptToFilm || {}),
       };
     }
+    syncProjectModeControl();
     syncInspector();
     render();
     autoSaveSessionQuiet(`Script-to-Film ${reason}`).catch(() => null);
@@ -32947,6 +32965,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     if (Array.isArray(plan.scenes)) state.segments = plan.scenes;
     mergeScriptToFilmTimeline(plan.scenes || state.segments);
     if (state.segments.length) state.activeId = state.segments[0].id;
+    syncProjectModeControl();
     syncInspector();
     render();
     autoSaveSessionQuiet("Script-to-Film plan applied").catch(() => null);
@@ -36265,6 +36284,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     syncVideoTypeControl();
     syncI2VVideoSettingsPanel();
     syncVideoModePanel();
+    syncProjectModeControl();
     syncInspector();
     render();
   }
@@ -40947,6 +40967,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   loadSessionButton.onclick = loadSession;
   loadLastProjectButton.onclick = loadLastProject;
   promptCreatorButton.onclick = openPromptCreatorPanel;
+  projectModeSelect.addEventListener("change", () => setScriptToFilmMode(projectModeSelect.value, "top-level mode change"));
+  scriptToFilmPlannerButton.onclick = openScriptToFilmPlannerFromBuilder;
   wizardButton.onclick = openWizardFromBuilder;
   storyboardBuilderButton.onclick = openStoryboardBuilderFromProject;
   fluxReferenceBuilderButton.onclick = openReferenceBuilderTargetChooser;
@@ -42138,6 +42160,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   syncZEnhanceSettingsPanel();
   syncI2VVideoSettingsPanel();
   syncVideoModePanel();
+  syncProjectModeControl();
   syncSceneNoteControls();
   syncVideoNoteControls();
   syncLyricNoteControls();
