@@ -382,7 +382,21 @@ export function openScriptToFilmPlanner(config) {
     } catch (error) { status.textContent = String(error?.message || error); }
   };
   const build = Object.assign(document.createElement("button"), { className: "vrgdg-film-button", textContent: "Build T2I → I2V Film" });
-  build.onclick = async () => { apply("Launching Script-to-Film build…"); await config.build?.(); };
+  build.onclick = async () => {
+    try {
+      build.disabled = true;
+      apply("Launching Script-to-Film build… See the progress window for live render status.");
+      const result = await config.build?.();
+      const finalPath = String(result?.final_video_path || "").trim();
+      status.textContent = finalPath
+        ? `Script-to-Film build complete: ${finalPath}`
+        : "Script-to-Film build complete. See the project output folder for the final video.";
+    } catch (error) {
+      status.textContent = `Script-to-Film build failed: ${String(error?.message || error || "Unknown build error")}`.slice(0, 2000);
+    } finally {
+      build.disabled = false;
+    }
+  };
   footer.append(Object.assign(document.createElement("span"), { className: "vrgdg-film-note", textContent: "Film controls are shared by Builder and Wizard." }), Object.assign(document.createElement("div"), { className: "vrgdg-film-actions" }));
   footer.lastChild.append(save, build);
   backdrop.onclick = (event) => { if (event.target === backdrop) backdrop.remove(); };
