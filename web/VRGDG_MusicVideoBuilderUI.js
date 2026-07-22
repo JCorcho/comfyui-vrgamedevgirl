@@ -16,6 +16,11 @@ import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
 import {
+  COMFYUI_SAMPLER_OPTIONS,
+  DEFAULT_LTX_SAMPLER,
+  mergeSamplerOptions,
+} from "./VRGDG_SamplerOptions.js";
+import {
   BROWSER_IMAGE_PROVIDERS,
   buildBrowserImagePrompt,
   getBrowserImageStatus,
@@ -50,16 +55,7 @@ const REQUIRED_LTX_ID_LORA = "lora_weights.safetensors";
 const REQUIRED_LTX_ID_LORA_URL = "https://huggingface.co/AviadDahan/LTX-2.3-ID-LoRA-CelebVHQ-3K";
 const DEFAULT_LTX_INGREDIENTS_WIDTH = 768;
 const DEFAULT_LTX_INGREDIENTS_HEIGHT = 448;
-const I2V_SAMPLER_OPTIONS = [
-  "euler_ancestral",
-  "euler",
-  "euler_cfg_pp",
-  "euler_ancestral_cfg_pp",
-  "dpmpp_2m",
-  "dpmpp_2m_sde",
-  "dpmpp_3m_sde",
-  "uni_pc",
-];
+let I2V_SAMPLER_OPTIONS = [...COMFYUI_SAMPLER_OPTIONS];
 const DEFAULT_I2V_PASS1_SIGMAS = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0";
 const DEFAULT_I2V_PASS2_SIGMAS = "0.909375, 0.725, 0.421875, 0.0";
 const DEFAULT_LTX_CHUNK_FEED_FORWARD_ENABLED = true;
@@ -695,7 +691,14 @@ function createProgressWindow(title, options = {}) {
   const barInner = document.createElement("div");
   barInner.style.cssText = "width:20%;height:100%;background:#22d3ee;border-radius:999px;transition:width .2s ease;";
   barOuter.append(barInner);
-  box.append(header, body, barOuter);
+  const iterationMeta = document.createElement("div");
+  iterationMeta.style.cssText = "display:none;padding:0 12px 5px;color:#bae6fd;font-size:11px;font-variant-numeric:tabular-nums;";
+  const iterationBarOuter = document.createElement("div");
+  iterationBarOuter.style.cssText = "display:none;height:5px;background:#1e3a5f;border-radius:999px;margin:0 12px 12px;overflow:hidden;";
+  const iterationBarInner = document.createElement("div");
+  iterationBarInner.style.cssText = "width:0%;height:100%;background:#a855f7;border-radius:999px;transition:width .15s ease;";
+  iterationBarOuter.append(iterationBarInner);
+  box.append(header, body, barOuter, iterationMeta, iterationBarOuter);
   document.body.append(box);
   const restore = document.createElement("button");
   restore.type = "button";
@@ -727,6 +730,18 @@ function createProgressWindow(title, options = {}) {
       body.innerHTML = html;
       if (percent !== null) barInner.style.width = `${Math.max(5, Math.min(100, percent))}%`;
       restore.textContent = title;
+    },
+    setIterationProgress({ value = 0, max = 0, secondsPerIteration = 0, node = "" } = {}) {
+      const safeMax = Math.max(0, Number(max) || 0);
+      const safeValue = Math.max(0, Number(value) || 0);
+      if (!safeMax) return;
+      const ratio = Math.max(0, Math.min(1, safeValue / safeMax));
+      const rate = Number(secondsPerIteration) > 0 ? ` • ${Number(secondsPerIteration).toFixed(2)} s/it` : "";
+      const nodeLabel = node ? ` • node ${node}` : "";
+      iterationMeta.textContent = `Sampler iterations: ${Math.floor(safeValue)}/${Math.floor(safeMax)}${rate}${nodeLabel}`;
+      iterationMeta.style.display = "block";
+      iterationBarOuter.style.display = "block";
+      iterationBarInner.style.width = `${Math.round(ratio * 100)}%`;
     },
     close(delay = 0) {
       setTimeout(removeAll, delay);
@@ -1524,37 +1539,78 @@ function sceneVideoTimeoutMessage({
   return lines.join("\n");
 }
 
+function subscribeToComfyProgress(promptId, onProgress) {
+  if (typeof onProgress !== "function" || typeof api?.addEventListener !== "function") return () => {};
+  const targetPromptId = String(promptId || "");
+  let passStartedAt = 0;
+  let previousValue = -1;
+  const handleProgress = (event) => {
+    const detail = event?.detail || {};
+    const eventPromptId = detail.prompt_id ?? detail.promptId ?? detail.promptID;
+    if (eventPromptId && targetPromptId && String(eventPromptId) !== targetPromptId) return;
+    const value = Number(detail.value ?? detail.current ?? detail.step);
+    const max = Number(detail.max ?? detail.total ?? detail.total_steps);
+    if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) return;
+    const now = performance.now();
+    // ComfyUI resets value to zero when a second sampler pass starts. Treat
+    // that as a new pass so s/it stays meaningful instead of averaging passes.
+    if (!passStartedAt || value < previousValue) passStartedAt = now;
+    previousValue = value;
+    const secondsPerIteration = value > 0 ? (now - passStartedAt) / 1000 / value : 0;
+    onProgress({
+      value: Math.max(0, value),
+      max,
+      secondsPerIteration,
+      node: String(detail.node ?? detail.node_id ?? "").trim(),
+      promptId: targetPromptId,
+    });
+  };
+  api.addEventListener("progress", handleProgress);
+  return () => {
+    try {
+      api.removeEventListener?.("progress", handleProgress);
+    } catch {
+      // Older ComfyUI frontends may not expose removeEventListener.
+    }
+  };
+}
+
 async function waitForVideos(promptId, onStatus, shouldCancel, findOutputFallback = null, options = {}) {
   const started = Date.now();
   let lastFallbackCheck = 0;
-  while (Date.now() - started < 40 * 60 * 1000) {
-    if (shouldCancel?.()) throw new Error("Stopped by user.");
-    const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}`);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`History request failed (${response.status})`);
-    const promptError = extractPromptErrorFromHistory(data, promptId);
-    if (promptError) throw new Error(`Scene video workflow failed:\n${promptError}`);
-    const videos = extractVideosFromHistory(data, promptId);
-    if (videos.length) return videos;
-    if (typeof findOutputFallback === "function" && Date.now() - lastFallbackCheck > 10000) {
-      lastFallbackCheck = Date.now();
-      const fallbackPath = await findOutputFallback().catch(() => "");
-      if (fallbackPath) return [{ params: { fullpath: fallbackPath }, fullpath: fallbackPath }];
-    }
-    if (promptHistoryFinished(data, promptId)) {
-      if (typeof findOutputFallback === "function") {
+  const unsubscribe = subscribeToComfyProgress(promptId, options.onProgress);
+  try {
+    while (Date.now() - started < 40 * 60 * 1000) {
+      if (shouldCancel?.()) throw new Error("Stopped by user.");
+      const response = await api.fetchApi(`/history/${encodeURIComponent(promptId)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(`History request failed (${response.status})`);
+      const promptError = extractPromptErrorFromHistory(data, promptId);
+      if (promptError) throw new Error(`Scene video workflow failed:\n${promptError}`);
+      const videos = extractVideosFromHistory(data, promptId);
+      if (videos.length) return videos;
+      if (typeof findOutputFallback === "function" && Date.now() - lastFallbackCheck > 10000) {
+        lastFallbackCheck = Date.now();
         const fallbackPath = await findOutputFallback().catch(() => "");
         if (fallbackPath) return [{ params: { fullpath: fallbackPath }, fullpath: fallbackPath }];
       }
-      throw new Error("Scene video workflow finished, but no video output was found in history.");
+      if (promptHistoryFinished(data, promptId)) {
+        if (typeof findOutputFallback === "function") {
+          const fallbackPath = await findOutputFallback().catch(() => "");
+          if (fallbackPath) return [{ params: { fullpath: fallbackPath }, fullpath: fallbackPath }];
+        }
+        throw new Error("Scene video workflow finished, but no video output was found in history.");
+      }
+      onStatus?.("Waiting for scene video...");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
-    onStatus?.("Waiting for scene video...");
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (typeof options.timeoutMessage === "function") {
+      throw new Error(options.timeoutMessage({ promptId }));
+    }
+    throw new Error(options.timeoutMessage || "Timed out waiting for the scene video.");
+  } finally {
+    unsubscribe();
   }
-  if (typeof options.timeoutMessage === "function") {
-    throw new Error(options.timeoutMessage({ promptId }));
-  }
-  throw new Error(options.timeoutMessage || "Timed out waiting for the scene video.");
 }
 
 async function waitForImages(promptId, onStatus, shouldCancel) {
@@ -3472,7 +3528,7 @@ function openBuilder(node) {
   flfColorMatchNote.style.cssText = flfGuideSettingsNote.style.cssText;
   const flfGuideSettingsSection = makeSettingsSection("First / Last Frame Settings", [makeField("Global transition type", flfGlobalTransitionTypeSelect), makeField("Gemma visual context", flfGemmaContextModeSelect), flfGemmaContextNote, flfDurationGuidanceNote, flfGuideSettingsGrid, flfGuideSettingsNote, flfRestoreWorkflowDefaultsButton, flfAdvancedDetails, flfChainPreviousEndFrame.wrapper, makeField("Global actual chained render start", flfRenderChainSourceSelect), flfChainNote, flfPreGeneratePromptsFromSceneImages.wrapper, flfPreGenerateNote, flfMatchPreviousClipColor.wrapper, flfColorMatchGrid, flfColorMatchNote]);
   flfGuideSettingsSection.style.display = "none";
-  const i2vPass1SamplerSelect = makeSelect(I2V_SAMPLER_OPTIONS, "euler_ancestral");
+  const i2vPass1SamplerSelect = makeSelect(I2V_SAMPLER_OPTIONS, DEFAULT_LTX_SAMPLER);
   const i2vPass1SigmasInput = makeInput(DEFAULT_I2V_PASS1_SIGMAS);
   const i2vPass1StrengthSlider = makeInput("1", "range");
   i2vPass1StrengthSlider.min = "0";
@@ -3484,7 +3540,7 @@ function openBuilder(node) {
   i2vPass1StrengthInput.max = "1";
   i2vPass1StrengthInput.step = "0.01";
   const i2vPass1Bypass = makeCheckbox("", false);
-  const i2vPass2SamplerSelect = makeSelect(I2V_SAMPLER_OPTIONS, "euler_ancestral");
+  const i2vPass2SamplerSelect = makeSelect(I2V_SAMPLER_OPTIONS, DEFAULT_LTX_SAMPLER);
   const i2vPass2SigmasInput = makeInput(DEFAULT_I2V_PASS2_SIGMAS);
   const i2vPass2StrengthSlider = makeInput("1", "range");
   i2vPass2StrengthSlider.min = "0";
@@ -12002,17 +12058,17 @@ function openBuilder(node) {
 
   function syncI2VAdvancedNodeControls(settings = {}) {
     const mode = currentVideoMode();
-    let pass1SamplerName = settings.pass1_sampler_name || "euler_ancestral";
+    let pass1SamplerName = settings.pass1_sampler_name || DEFAULT_LTX_SAMPLER;
     let pass1Sigmas = settings.pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS;
-    let pass2SamplerName = settings.pass2_sampler_name || "euler_ancestral";
+    let pass2SamplerName = settings.pass2_sampler_name || DEFAULT_LTX_SAMPLER;
     let pass2Sigmas = settings.pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS;
     if (mode === "t2v") {
-      pass1SamplerName = settings.t2v_pass1_sampler_name || "euler_ancestral";
+      pass1SamplerName = settings.t2v_pass1_sampler_name || DEFAULT_LTX_SAMPLER;
       pass1Sigmas = settings.t2v_pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS;
-      pass2SamplerName = settings.t2v_pass2_sampler_name || "euler_ancestral";
+      pass2SamplerName = settings.t2v_pass2_sampler_name || DEFAULT_LTX_SAMPLER;
       pass2Sigmas = settings.t2v_pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS;
     } else if (mode === "rtv") {
-      pass1SamplerName = settings.rtv_pass1_sampler_name || "euler_ancestral";
+      pass1SamplerName = settings.rtv_pass1_sampler_name || DEFAULT_LTX_SAMPLER;
       pass1Sigmas = settings.rtv_pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS;
     } else if (mode === "ingredients") {
       pass1SamplerName = settings.ingredients_pass1_sampler_name || DEFAULT_INGREDIENTS_SAMPLER;
@@ -12421,7 +12477,7 @@ function openBuilder(node) {
     const repairedPreviousIngredientsHeight = previousIngredientsWidth === 1920 && previousIngredientsHeight === 1080 ? DEFAULT_LTX_INGREDIENTS_HEIGHT : previousIngredientsHeight;
     const ingredientsWidth = isIngredientsMode ? Number(i2vWidthInput.value || DEFAULT_LTX_INGREDIENTS_WIDTH) : repairedPreviousIngredientsWidth;
     const ingredientsHeight = isIngredientsMode ? Number(i2vHeightInput.value || DEFAULT_LTX_INGREDIENTS_HEIGHT) : repairedPreviousIngredientsHeight;
-    const defaultSamplerForMode = isIngredientsMode ? DEFAULT_INGREDIENTS_SAMPLER : "euler_ancestral";
+    const defaultSamplerForMode = isIngredientsMode ? DEFAULT_INGREDIENTS_SAMPLER : DEFAULT_LTX_SAMPLER;
     const pass1SamplerName = i2vPass1SamplerSelect.value || defaultSamplerForMode;
     const pass1Sigmas = normalizeI2VSigmasText(i2vPass1SigmasInput.value, DEFAULT_I2V_PASS1_SIGMAS);
     const pass2SamplerName = i2vPass2SamplerSelect.value || defaultSamplerForMode;
@@ -30958,17 +31014,17 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     const count = Math.max(0, Math.min(4, Number(settings.lora_count || 0)));
     const videoMode = currentVideoMode();
     const singlePassLoras = videoMode === "rtv" || videoMode === "flf";
-    let pass1SamplerName = settings.pass1_sampler_name || "euler_ancestral";
+    let pass1SamplerName = settings.pass1_sampler_name || DEFAULT_LTX_SAMPLER;
     let pass1Sigmas = settings.pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS;
-    let pass2SamplerName = settings.pass2_sampler_name || "euler_ancestral";
+    let pass2SamplerName = settings.pass2_sampler_name || DEFAULT_LTX_SAMPLER;
     let pass2Sigmas = settings.pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS;
     if (videoMode === "t2v") {
-      pass1SamplerName = settings.t2v_pass1_sampler_name || "euler_ancestral";
+      pass1SamplerName = settings.t2v_pass1_sampler_name || DEFAULT_LTX_SAMPLER;
       pass1Sigmas = settings.t2v_pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS;
-      pass2SamplerName = settings.t2v_pass2_sampler_name || "euler_ancestral";
+      pass2SamplerName = settings.t2v_pass2_sampler_name || DEFAULT_LTX_SAMPLER;
       pass2Sigmas = settings.t2v_pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS;
     } else if (videoMode === "rtv") {
-      pass1SamplerName = settings.rtv_pass1_sampler_name || "euler_ancestral";
+      pass1SamplerName = settings.rtv_pass1_sampler_name || DEFAULT_LTX_SAMPLER;
       pass1Sigmas = settings.rtv_pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS;
     } else if (videoMode === "ingredients") {
       pass1SamplerName = settings.ingredients_pass1_sampler_name || DEFAULT_INGREDIENTS_SAMPLER;
@@ -33116,6 +33172,15 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         }, 30000);
         return found.video_path || "";
       },
+      {
+        onProgress: ({ value, max, secondsPerIteration, node }) => {
+          const rate = secondsPerIteration > 0 ? ` • ${secondsPerIteration.toFixed(2)} s/it` : "";
+          const nodeLabel = node ? ` • node ${node}` : "";
+          const percent = pct(58 + (Math.min(1, Math.max(0, value / max)) * 25));
+          progress?.setIterationProgress?.({ value, max, secondsPerIteration, node });
+          progress?.set(`Film ${label}: LTX sampling step ${Math.floor(value)}/${Math.floor(max)}${rate}${nodeLabel}\nGenerating native audio and video…`, percent);
+        },
+      },
     );
     const videoPath = resolveComfyVideoPath(videos[videos.length - 1] || null);
     if (!videoPath) throw new Error(`${label}: the Film workflow completed but no video output was found.`);
@@ -33418,6 +33483,20 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           projectFolder: projectInput.value,
           finalFolder: collectedSceneVideoFolder(),
         }),
+        onProgress: ({ value, max, secondsPerIteration, node }) => {
+          const rate = secondsPerIteration > 0 ? ` • ${secondsPerIteration.toFixed(2)} s/it` : "";
+          const nodeLabel = node ? ` • node ${node}` : "";
+          const percent = pct(60 + (Math.min(1, Math.max(0, value / max)) * 25));
+          progress?.setIterationProgress?.({ value, max, secondsPerIteration, node });
+          progress?.setHtml(sceneVideoDetailsHtml(
+            segment,
+            sceneIndex,
+            srtPath,
+            built.output_folder || defaultOutputFolder,
+            `${batchLabel}LTX sampling step ${Math.floor(value)}/${Math.floor(max)}${rate}${nodeLabel}\nWaiting for video and native audio...\nPrompt ID: ${promptId}`,
+            workflowDetails,
+          ), percent);
+        },
       }
     );
     const video = videos[videos.length - 1] || null;
@@ -40382,9 +40461,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           audio_vae_name: String(videoSettings.audio_vae_name || ""),
           violets_ltx23_checkpoint_name: String(videoSettings.violets_ltx23_checkpoint_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT),
           ltx_audio_text_encoder_name: String(videoSettings.ltx_audio_text_encoder_name || DEFAULT_VIOLETS_LTX23_FP8_CHECKPOINT),
-          pass1_sampler_name: String(videoSettings.pass1_sampler_name || "euler_ancestral"),
+          pass1_sampler_name: String(videoSettings.pass1_sampler_name || DEFAULT_LTX_SAMPLER),
           pass1_sigmas: String(videoSettings.pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS),
-          pass2_sampler_name: String(videoSettings.pass2_sampler_name || "euler_ancestral"),
+          pass2_sampler_name: String(videoSettings.pass2_sampler_name || DEFAULT_LTX_SAMPLER),
           pass2_sigmas: String(videoSettings.pass2_sigmas || DEFAULT_I2V_PASS2_SIGMAS),
           msr_lora_name: String(videoSettings.msr_lora_name || REQUIRED_LTX_MSR_LORA),
           msr_first_pass_strength: Number(videoSettings.msr_first_pass_strength ?? 1),
@@ -41885,6 +41964,24 @@ Chrome vault corridor = Sealed industrial passage...</pre>
 
   async function refreshModelChoices() {
     const data = await getJson("/vrgdg/workflow_runner/i2v_choices");
+    const updateSamplerSelect = (picker) => {
+      if (!picker) return;
+      const current = String(picker.value || "").trim();
+      picker.replaceChildren(...I2V_SAMPLER_OPTIONS.map((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        return option;
+      }));
+      if (current && I2V_SAMPLER_OPTIONS.includes(current)) picker.value = current;
+    };
+    I2V_SAMPLER_OPTIONS = mergeSamplerOptions(
+      Array.isArray(data.samplers) ? data.samplers : [],
+      I2V_SAMPLER_OPTIONS,
+      COMFYUI_SAMPLER_OPTIONS,
+    );
+    updateSamplerSelect(i2vPass1SamplerSelect);
+    updateSamplerSelect(i2vPass2SamplerSelect);
     const setOptions = (picker, options, preferred = []) => {
       const preferredList = Array.isArray(preferred) ? preferred : [preferred];
       const values = Array.from(new Set((options || []).filter((item) => String(item || "").trim())));

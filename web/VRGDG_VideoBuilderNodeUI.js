@@ -1,10 +1,11 @@
 import { app } from "../../scripts/app.js";
+import { COMFYUI_SAMPLER_OPTIONS } from "./VRGDG_SamplerOptions.js";
 
 const STORAGE_KEY = "vrgdg_node_canvas_prototype_v1";
 const COMFY_NODE_NAME = "VRGDG_VideoBuilderNodeCanvas";
 const DEFAULT_I2V_PASS1_SIGMAS = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0";
 const DEFAULT_I2V_PASS2_SIGMAS = "0.909375, 0.725, 0.421875, 0.0";
-const I2V_SAMPLER_OPTIONS = ["euler_ancestral", "euler", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_3m_sde"];
+const I2V_SAMPLER_OPTIONS = COMFYUI_SAMPLER_OPTIONS;
 const I2V_TAB_ALIASES = {
   model: "models",
   prompt: "llm_prompting",

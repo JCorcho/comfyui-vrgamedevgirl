@@ -748,7 +748,8 @@ def build_ltx_face_fix_prompt(payload):
     prompt["4880"]["inputs"]["cond_image_strength"] = float(settings.get("cond_image_strength", 0.50))
     prompt["4880"]["inputs"]["optional_cond_image_indices"] = str(run.get("anchor_indices_text") or "")
     prompt["4638"]["inputs"]["noise_seed"] = int(settings.get("seed", 42))
-    prompt["4637"]["inputs"]["sampler_name"] = str(settings.get("sampler") or "euler_ancestral")
+    from .VRGDG_WorkflowRunnerNodes import _sampler_name
+    prompt["4637"]["inputs"]["sampler_name"] = _sampler_name(settings.get("sampler"))
     prompt["4896"]["inputs"]["sigmas"] = str(settings.get("sigmas") or "0.909375, 0.725, 0.421875, 0.0")
     return {
         "workflow_path": workflow_path,

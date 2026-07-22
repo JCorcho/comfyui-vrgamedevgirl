@@ -12,6 +12,10 @@ import sys
 import time
 
 import folder_paths
+try:
+    import comfy.samplers as _comfy_samplers
+except Exception:
+    _comfy_samplers = None
 from aiohttp import web
 from server import PromptServer
 
@@ -53,6 +57,19 @@ _MIN_LTX_INGREDIENTS_FRAMES = 121
 _DEFAULT_I2V_PASS1_SIGMAS = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 _DEFAULT_I2V_PASS2_SIGMAS = "0.909375, 0.725, 0.421875, 0.0"
 _DEFAULT_INGREDIENTS_SAMPLER = "euler_ancestral_cfg_pp"
+_FALLBACK_SAMPLER_OPTIONS = (
+    "euler", "euler_cfg_pp", "euler_ancestral", "euler_ancestral_cfg_pp",
+    "heun", "heunpp2", "exp_heun_2_x0", "exp_heun_2_x0_sde",
+    "dpm_2", "dpm_2_ancestral", "lms", "dpm_fast", "dpm_adaptive",
+    "dpmpp_2s_ancestral", "dpmpp_2s_ancestral_cfg_pp", "dpmpp_sde",
+    "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_cfg_pp", "dpmpp_2m_sde",
+    "dpmpp_2m_sde_gpu", "dpmpp_2m_sde_heun", "dpmpp_2m_sde_heun_gpu",
+    "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddpm", "lcm", "ipndm", "ipndm_v",
+    "deis", "res_multistep", "res_multistep_cfg_pp", "res_multistep_ancestral",
+    "res_multistep_ancestral_cfg_pp", "gradient_estimation", "gradient_estimation_cfg_pp",
+    "er_sde", "seeds_2", "seeds_3", "sa_solver", "sa_solver_pece", "ddim",
+    "uni_pc", "uni_pc_bh2",
+)
 _I2V_MODEL_PROFILE_DEFAULT = "repository_default"
 _I2V_MODEL_PROFILE_VIOLETS_LTX23_FP8 = "violets_ltx23_fp8"
 _VIOLETS_LTX23_FP8_CHECKPOINT = "10Eros_v1.4_fp8mixed_learned.safetensors"
@@ -68,6 +85,30 @@ _PLACEHOLDER_I2I_IMAGE_NAME = "vrgdg_placeholder_i2i.png"
 _PLACEHOLDER_I2I_IMAGE_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+
+
+def _native_sampler_choices():
+    """Return the sampler names accepted by this running ComfyUI instance."""
+    values = []
+    try:
+        values = list(getattr(getattr(_comfy_samplers, "KSampler", None), "SAMPLERS", []) or [])
+    except Exception:
+        values = []
+    # Keep every native core sampler available even if a custom sampler node
+    # replaces (rather than extends) KSampler.SAMPLERS during startup. Live
+    # names remain first so extension-specific samplers are preserved.
+    values.extend(_FALLBACK_SAMPLER_OPTIONS)
+    return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+
+def _sampler_name(value, fallback="euler_ancestral"):
+    """Keep UI payloads inside ComfyUI's live sampler vocabulary."""
+    candidate = str(value or "").strip()
+    choices = _native_sampler_choices()
+    if candidate in choices:
+        return candidate
+    fallback_name = str(fallback or "euler_ancestral").strip()
+    return fallback_name if fallback_name in choices else choices[0]
 
 
 def _workflow_template_path():
@@ -1177,7 +1218,7 @@ def _patch_krea2_2pass_api_prompt(prompt, payload):
     if seed_mode in {"random", "randomize"}:
         seed = random.randint(0, 0xFFFFFFFFFFFFFFFF)
     cfg = max(1.0, min(1.2, _float_payload(payload, "cfg", 1.2)))
-    sampler_name = str(payload.get("sampler_name") or "euler_ancestral_cfg_pp").strip()
+    sampler_name = _sampler_name(payload.get("sampler_name"), _DEFAULT_INGREDIENTS_SAMPLER)
     use_i2i = _bool_payload(payload, "use_image_to_image", False)
     creativity = _int_payload(payload, "image_to_image_creativity", 5, 0, 10)
 
@@ -1568,21 +1609,21 @@ def _normalize_sigma_list_text(value, default):
 
 
 def _patch_ltx_two_pass_sampler_overrides(prompt, payload):
-    _set_api_input(prompt, "218:186", "sampler_name", str(payload.get("pass1_sampler_name") or "euler_ancestral").strip() or "euler_ancestral")
+    _set_api_input(prompt, "218:186", "sampler_name", _sampler_name(payload.get("pass1_sampler_name")))
     _set_api_input(prompt, "218:209", "sigmas", _normalize_sigma_list_text(payload.get("pass1_sigmas"), _DEFAULT_I2V_PASS1_SIGMAS))
-    _set_api_input(prompt, "219:187", "sampler_name", str(payload.get("pass2_sampler_name") or "euler_ancestral").strip() or "euler_ancestral")
+    _set_api_input(prompt, "219:187", "sampler_name", _sampler_name(payload.get("pass2_sampler_name")))
     _set_api_input(prompt, "219:208", "sigmas", _normalize_sigma_list_text(payload.get("pass2_sigmas"), _DEFAULT_I2V_PASS2_SIGMAS))
 
 
 def _patch_ltx_ingredients_sampler_overrides(prompt, payload):
-    _set_api_input(prompt, "218:186", "sampler_name", str(payload.get("pass1_sampler_name") or _DEFAULT_INGREDIENTS_SAMPLER).strip() or _DEFAULT_INGREDIENTS_SAMPLER)
+    _set_api_input(prompt, "218:186", "sampler_name", _sampler_name(payload.get("pass1_sampler_name"), _DEFAULT_INGREDIENTS_SAMPLER))
     _set_api_input(prompt, "218:209", "sigmas", _normalize_sigma_list_text(payload.get("pass1_sigmas"), _DEFAULT_I2V_PASS1_SIGMAS))
-    _set_api_input(prompt, "219:187", "sampler_name", str(payload.get("pass2_sampler_name") or _DEFAULT_INGREDIENTS_SAMPLER).strip() or _DEFAULT_INGREDIENTS_SAMPLER)
+    _set_api_input(prompt, "219:187", "sampler_name", _sampler_name(payload.get("pass2_sampler_name"), _DEFAULT_INGREDIENTS_SAMPLER))
     _set_api_input(prompt, "219:208", "sigmas", _normalize_sigma_list_text(payload.get("pass2_sigmas"), _DEFAULT_I2V_PASS2_SIGMAS))
 
 
 def _patch_ltx_single_pass_sampler_overrides(prompt, payload):
-    _set_api_input(prompt, "218:186", "sampler_name", str(payload.get("pass1_sampler_name") or "euler_ancestral").strip() or "euler_ancestral")
+    _set_api_input(prompt, "218:186", "sampler_name", _sampler_name(payload.get("pass1_sampler_name")))
     _set_api_input(prompt, "218:209", "sigmas", _normalize_sigma_list_text(payload.get("pass1_sigmas"), _DEFAULT_I2V_PASS1_SIGMAS))
 
 
@@ -2310,12 +2351,12 @@ def _patch_id_lora_api_prompt(prompt, payload):
     _set_api_input(prompt, "954", "start_percent", 0.0)
     _set_api_input(prompt, "954", "end_percent", 1.0)
 
-    _set_api_input(prompt, "924", "sampler_name", str(payload.get("pass1_sampler_name") or "euler_ancestral").strip() or "euler_ancestral")
+    _set_api_input(prompt, "924", "sampler_name", _sampler_name(payload.get("pass1_sampler_name")))
     _set_api_input(prompt, "929", "sigmas", _normalize_sigma_list_text(payload.get("pass1_sigmas"), _DEFAULT_I2V_PASS1_SIGMAS))
     _set_api_input(prompt, "915", "noise_seed", pass1_seed)
     _set_api_input(prompt, "936", "strength", _float_payload(payload, "pass1_inplace_strength", 0.7, 0.0, 1.0))
     _set_api_input(prompt, "936", "bypass", _bool_payload(payload, "pass1_inplace_bypass", False))
-    _set_api_input(prompt, "917", "sampler_name", str(payload.get("pass2_sampler_name") or "euler_ancestral").strip() or "euler_ancestral")
+    _set_api_input(prompt, "917", "sampler_name", _sampler_name(payload.get("pass2_sampler_name")))
     _set_api_input(prompt, "918", "sigmas", _normalize_sigma_list_text(payload.get("pass2_sigmas"), _DEFAULT_I2V_PASS2_SIGMAS))
     _set_api_input(prompt, "914", "noise_seed", pass2_seed)
     _set_api_input(prompt, "923", "strength", _float_payload(payload, "pass2_inplace_strength", 1.0, 0.0, 1.0))
@@ -3942,6 +3983,7 @@ def _ensure_workflow_runner_routes():
         video_gguf_unets, video_diffusion_models = _ltx_video_model_choices()
         return web.json_response({
             "ok": True,
+            "samplers": _native_sampler_choices(),
             "unets": _folder_choices(("unet", "diffusion_models")),
             "video_gguf_unets": video_gguf_unets,
             "video_diffusion_models": video_diffusion_models,

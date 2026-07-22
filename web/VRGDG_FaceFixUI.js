@@ -1,3 +1,5 @@
+import { COMFYUI_SAMPLER_OPTIONS, DEFAULT_LTX_SAMPLER } from "./VRGDG_SamplerOptions.js";
+
 const FACE_FIX_ACCENT = "#22d3ee";
 
 function button(label, primary = false) {
@@ -283,13 +285,13 @@ export function createFaceFixTool(options = {}) {
     const seed = input("number", "42", 0, Number.MAX_SAFE_INTEGER, 1);
     const sampler = document.createElement("select");
     sampler.style.cssText = "width:100%;box-sizing:border-box;border:1px solid #3f3f46;border-radius:6px;background:#18181b;color:#f4f4f5;padding:7px 8px;font-size:12px;";
-    ["euler_ancestral", "euler", "dpmpp_2m", "dpmpp_sde", "dpmpp_2m_sde"].forEach((name) => {
+    COMFYUI_SAMPLER_OPTIONS.forEach((name) => {
       const option = document.createElement("option");
       option.value = name;
       option.textContent = name;
       sampler.append(option);
     });
-    sampler.value = "euler_ancestral";
+    sampler.value = DEFAULT_LTX_SAMPLER;
     const sigmas = input("text", "0.909375, 0.725, 0.421875, 0.0");
     advancedGrid.append(
       describedField("Original video guidance", guidingStrength, "How strongly LTX follows the original cropped video's motion and structure. Higher values preserve more of the source, including possible blur."),

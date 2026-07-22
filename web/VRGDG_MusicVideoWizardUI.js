@@ -1,3 +1,5 @@
+import { COMFYUI_SAMPLER_OPTIONS, DEFAULT_LTX_SAMPLER, mergeSamplerOptions } from "./VRGDG_SamplerOptions.js";
+
 const WIZARD_STYLE_ID = "vrgdg-music-video-wizard-style";
 const WIZARD_DRAFT_PREFIX = "vrgdg_music_video_wizard_draft:";
 
@@ -1384,13 +1386,13 @@ export function openMusicVideoWizard(api = {}) {
       el("div", "vrgdg-wizard-settings-title", "I2V Advanced Sampling"),
       el("div", "vrgdg-wizard-settings-subtitle", "These are the same two-pass samplers and sigma schedules used by the Video Creator. They are saved with the project or the selected scene settings."),
     );
-    const samplerOptions = Array.from(new Set([
-      String(settings.pass1_sampler_name || "euler_ancestral"),
-      String(settings.pass2_sampler_name || "euler_ancestral"),
-      ...(Array.isArray(data.i2vSamplerOptions) ? data.i2vSamplerOptions : ["euler_ancestral", "euler", "euler_cfg_pp", "euler_ancestral_cfg_pp", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_3m_sde", "uni_pc"]),
-    ].filter(Boolean)));
-    const pass1Sampler = select(samplerOptions, settings.pass1_sampler_name || "euler_ancestral");
-    const pass2Sampler = select(samplerOptions, settings.pass2_sampler_name || "euler_ancestral");
+    const samplerOptions = mergeSamplerOptions(
+      Array.isArray(data.i2vSamplerOptions) ? data.i2vSamplerOptions : [],
+      COMFYUI_SAMPLER_OPTIONS,
+      [settings.pass1_sampler_name, settings.pass2_sampler_name],
+    );
+    const pass1Sampler = select(samplerOptions, settings.pass1_sampler_name || DEFAULT_LTX_SAMPLER);
+    const pass2Sampler = select(samplerOptions, settings.pass2_sampler_name || DEFAULT_LTX_SAMPLER);
     const pass1Sigmas = textarea(settings.pass1_sigmas || "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0");
     const pass2Sigmas = textarea(settings.pass2_sigmas || "0.909375, 0.725, 0.421875, 0.0");
     pass1Sigmas.style.minHeight = "70px";
