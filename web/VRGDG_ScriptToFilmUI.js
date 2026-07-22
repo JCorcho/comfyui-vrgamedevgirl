@@ -57,6 +57,27 @@ async function requestJson(path, method = "GET", payload = null) {
   return data;
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function requestPromptPlan(payload, onProgress = null) {
+  const accepted = await requestJson("/vrgdg/script_to_film/create_prompt_plan", "POST", payload);
+  if (Array.isArray(accepted.scenes)) return accepted;
+  const jobId = String(accepted.job_id || "").trim();
+  if (!jobId) throw new Error("Film Prompt Creator did not return a job ID.");
+  const deadline = Date.now() + (10 * 60 * 1000);
+  let elapsedSeconds = 0;
+  while (Date.now() < deadline) {
+    await delay(1500);
+    elapsedSeconds += 1.5;
+    const status = await requestJson(`/vrgdg/script_to_film/create_prompt_plan_status?job_id=${encodeURIComponent(jobId)}`);
+    if (status.status === "complete" && Array.isArray(status.scenes)) return status;
+    onProgress?.(status.status || "running", elapsedSeconds);
+  }
+  throw new Error("Film Prompt Creator timed out after 10 minutes. The server job may still finish; check ComfyUI logs before retrying.");
+}
+
 function errorMessage(error) {
   const name = String(error?.name || "").trim();
   const message = String(error?.message || error || "Unknown browser error").trim();
@@ -231,7 +252,7 @@ export function openScriptToFilmPlanner(config) {
           throw new Error("Choose a Film Prompt Creator model before creating Film scenes.");
         }
         status.textContent = `The selected Film Prompt Creator model is planning Film scenes: ${selectedModel || state.text_gemma_runner}…`;
-        const plan = await requestJson("/vrgdg/script_to_film/create_prompt_plan", "POST", {
+        const plan = await requestPromptPlan({
           script: state.scriptToFilm.script,
           fps: state.scriptToFilm.fps,
           model_file: selectedModel,
@@ -242,6 +263,8 @@ export function openScriptToFilmPlanner(config) {
           lm_studio_api_key: state.lm_studio_api_key || "",
           llm_api_provider: state.llm_api_provider || "",
           llm_api_model: state.llm_api_model || "",
+        }, (jobStatus, elapsedSeconds) => {
+          status.textContent = `Film Prompt Creator is still running (${jobStatus}, ${Math.floor(elapsedSeconds)}s): ${selectedModel || state.text_gemma_runner}…`;
         });
         if (!Array.isArray(plan?.scenes) || !plan.scenes.length) throw new Error("The Prompt Creator returned no Film scenes.");
         state.segments = ensureStableSceneIds(plan.scenes);

@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import time
+import uuid
 
 import folder_paths
 from aiohttp import web
@@ -53,6 +54,8 @@ _FILM_PROFILE = "film_t2av_character_ref"
 _FILM_PROFILE_LABEL = "Film/T2AV + Character Ref"
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _FILM_PLACEHOLDER_IMAGE_NAME = "vrgdg_script_to_film_placeholder.png"
+_SCRIPT_PROMPT_JOBS = {}
+_SCRIPT_PROMPT_JOB_TTL_SECONDS = 1800
 
 
 def _template_path():
@@ -402,6 +405,28 @@ def _create_prompt_creator_output(payload):
     return plan
 
 
+def _prune_script_prompt_jobs():
+    cutoff = time.time() - _SCRIPT_PROMPT_JOB_TTL_SECONDS
+    for job_id, job in list(_SCRIPT_PROMPT_JOBS.items()):
+        if float(job.get("created_at", 0)) < cutoff:
+            _SCRIPT_PROMPT_JOBS.pop(job_id, None)
+
+
+async def _run_script_prompt_job(job_id, payload):
+    job = _SCRIPT_PROMPT_JOBS.get(job_id)
+    if not job:
+        return
+    job["status"] = "running"
+    try:
+        result = await asyncio.to_thread(_create_prompt_creator_output, payload)
+        job["status"] = "complete"
+        job["result"] = result
+    except Exception as exc:
+        print(f"[VRGDG Script-to-Film] Prompt Creator failed: {type(exc).__name__}: {exc}")
+        job["status"] = "error"
+        job["error"] = str(exc)
+
+
 def _save_plan(payload):
     project = _safe_project_folder(payload.get("project_folder", ""))
     plan = _plan_payload(payload)
@@ -669,14 +694,36 @@ def _ensure_routes():
     async def script_to_film_create_prompt_plan(request):
         try:
             payload = await request.json()
-            result = await asyncio.to_thread(_create_prompt_creator_output, payload)
-            return web.json_response({"ok": True, **result})
+            _prune_script_prompt_jobs()
+            job_id = uuid.uuid4().hex
+            _SCRIPT_PROMPT_JOBS[job_id] = {
+                "created_at": time.time(),
+                "status": "queued",
+            }
+            asyncio.create_task(_run_script_prompt_job(job_id, payload))
+            # Do not hold a browser HTTP request open for the several-minute
+            # local GGUF generation. The browser polls the short status route.
+            return web.json_response({"ok": True, "status": "queued", "job_id": job_id}, status=202)
         except Exception as exc:
             # Browser callers receive this same message, but recording it in
             # Comfy's logs makes future LLM/JSON failures diagnosable after the
             # modal has been closed. Do not log raw scripts or model output.
             print(f"[VRGDG Script-to-Film] Prompt Creator failed: {type(exc).__name__}: {exc}")
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.get("/vrgdg/script_to_film/create_prompt_plan_status")
+    async def script_to_film_create_prompt_plan_status(request):
+        _prune_script_prompt_jobs()
+        job_id = _safe_text(request.query.get("job_id", ""), 80)
+        job = _SCRIPT_PROMPT_JOBS.get(job_id)
+        if not job:
+            return web.json_response({"ok": False, "error": "Film Prompt Creator job was not found."}, status=404)
+        status = str(job.get("status", "queued"))
+        if status == "error":
+            return web.json_response({"ok": False, "status": status, "job_id": job_id, "error": job.get("error", "Film Prompt Creator failed.")}, status=400)
+        if status != "complete":
+            return web.json_response({"ok": True, "status": status, "job_id": job_id})
+        return web.json_response({"ok": True, "status": status, "job_id": job_id, **(job.get("result") or {})})
 
     @server.routes.post("/vrgdg/script_to_film/client_error")
     async def script_to_film_client_error(request):

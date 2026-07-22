@@ -78,6 +78,8 @@ The shared Film Planner now exposes **Film Prompt Creator model** directly in it
 
 For local GPU-offloaded GGUFs, the Film backend estimates the model file, runtime, context, and safety reserve before loading. A model whose full GPU-offload requirement exceeds the installed card fails immediately with a clear capacity message; it must never be loaded until ComfyUI becomes memory-starved and returns an opaque 502. A large model can still be used deliberately after lowering GPU layers in the shared LLM settings, while the smaller Qwen profile is the appropriate test choice on this 16 GiB GPU.
 
+Local GGUF generation is queued in the backend rather than held in one browser request. The local 8B Qwen run can take several minutes; the Planner polls `create_prompt_plan_status` and keeps showing progress. This avoids the WebView/HTTP gateway's approximately 120-second request limit even when the server continues the generation successfully.
+
 ## Film graph construction
 
 Run this after modifying the maintained source I2V graph or the generator:
@@ -103,7 +105,8 @@ The builder starts from `Singlei2vForUI_API.json`, then makes these structural s
 | --- | --- |
 | `GET /vrgdg/script_to_film/config` | Live contract/template check. |
 | `POST /vrgdg/script_to_film/plan` | Normalize fields and duration/frame plan without writing. |
-| `POST /vrgdg/script_to_film/create_prompt_plan` | Run selected Prompt Creator model with the dedicated system file. |
+| `POST /vrgdg/script_to_film/create_prompt_plan` | Queue the selected Prompt Creator model and return a short-lived job ID. |
+| `GET /vrgdg/script_to_film/create_prompt_plan_status` | Poll a queued Prompt Creator job until its structured Film plan is ready. |
 | `POST /vrgdg/script_to_film/client_error` | Record a sanitized browser-only Planner failure in ComfyUI logs. |
 | `POST /vrgdg/script_to_film/save_plan` | Persist `script_to_film/film_scene_plan.json` under the project folder. |
 | `POST /vrgdg/script_to_film/build_t2av_prompt` | Produce the isolated API graph with Violets LTX loader/LoRA enforcement. |
