@@ -10,7 +10,7 @@ import {
   storyboardGptPayload,
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
-import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260721-script-to-film";
+import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260722-ltx-memory";
 import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-film-prompt-model";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
@@ -35,7 +35,7 @@ import {
 } from "./VRGDG_OverlayTrack.js";
 
 const NODE_NAME = "VRGDG_MusicVideoBuilderUI";
-const BUILDER_UI_VERSION = "script-to-film-2026-07-21";
+const BUILDER_UI_VERSION = "script-to-film-2026-07-22-ltx-memory";
 const HIDDEN_WIDGETS = new Set(["audio_path", "project_folder", "session_path", "srt_path"]);
 const DEFAULT_I2V_UNET = "LTX-2.3-22B-distilled-1.1-Q6_K.gguf";
 const DEFAULT_I2V_DIFFUSION_MODEL = "LTX_8bit\\ltx-2.3-22b-dev_transformer_only_int8_convrot.safetensors";
@@ -62,6 +62,10 @@ const I2V_SAMPLER_OPTIONS = [
 ];
 const DEFAULT_I2V_PASS1_SIGMAS = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0";
 const DEFAULT_I2V_PASS2_SIGMAS = "0.909375, 0.725, 0.421875, 0.0";
+const DEFAULT_LTX_CHUNK_FEED_FORWARD_ENABLED = true;
+const DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS = 2;
+const DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD = 4096;
+const DEFAULT_LTX_VHS_VAE_BATCH_SIZE = 8;
 const DEFAULT_INGREDIENTS_SAMPLER = "euler_ancestral_cfg_pp";
 const LOCATION_TRIGGER_GPT_URL = "https://chatgpt.com/g/g-6a36e98d149c8191832005c2050a8c89-ltx-2-3-full-location-mapping-with-lora-trigger";
 const LOCATION_MAPPER_GPT_URL = "https://chatgpt.com/g/g-6a2df090651c819190b00d7974677ad2-ltx-2-3-video-builder-location-creator-mapper";
@@ -3510,6 +3514,35 @@ function openBuilder(node) {
   });
   i2vAdvancedNodeSettingsPanel.append(i2vPass1NodePanel, i2vPass2NodePanel);
   const i2vAdvancedNodeSettingsSection = i2vAdvancedNodeSettingsPanel;
+  const ltxChunkFeedForwardEnabled = makeCheckbox("Enable LTX Chunk FeedForward", DEFAULT_LTX_CHUNK_FEED_FORWARD_ENABLED);
+  const ltxChunkFeedForwardChunks = makeInput(String(DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS), "number");
+  ltxChunkFeedForwardChunks.min = "1";
+  ltxChunkFeedForwardChunks.max = "100";
+  ltxChunkFeedForwardChunks.step = "1";
+  const ltxChunkFeedForwardDimThreshold = makeInput(String(DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD), "number");
+  ltxChunkFeedForwardDimThreshold.min = "0";
+  ltxChunkFeedForwardDimThreshold.max = "16384";
+  ltxChunkFeedForwardDimThreshold.step = "256";
+  const ltxVhsVaeBatchSize = makeInput(String(DEFAULT_LTX_VHS_VAE_BATCH_SIZE), "number");
+  ltxVhsVaeBatchSize.min = "1";
+  ltxVhsVaeBatchSize.max = "4096";
+  ltxVhsVaeBatchSize.step = "1";
+  const ltxMemorySafetyNote = document.createElement("div");
+  ltxMemorySafetyNote.textContent = "Violets LTX 2.3 FP8 only: chunk the feed-forward activations in both sampler passes, then decode the final latent in bounded batches. Lower chunks / VAE batch size uses less VRAM; the defaults are the safe 16 GB-card profile.";
+  ltxMemorySafetyNote.style.cssText = "font-size:11px;color:#bae6fd;line-height:1.45;";
+  const ltxMemorySafetyGrid = document.createElement("div");
+  ltxMemorySafetyGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;";
+  ltxMemorySafetyGrid.append(
+    makeField("Feed-forward chunks", ltxChunkFeedForwardChunks),
+    makeField("Dimension threshold", ltxChunkFeedForwardDimThreshold),
+    makeField("VAE frames per batch", ltxVhsVaeBatchSize),
+  );
+  const ltxMemorySafetySection = makeSettingsSection("LTX Memory Safety", [
+    ltxChunkFeedForwardEnabled.wrapper,
+    ltxMemorySafetyNote,
+    ltxMemorySafetyGrid,
+  ]);
+  ltxMemorySafetySection.style.display = "none";
   const createSceneVideoButton = makeButton("Create Scene Video", "primary");
   const createSceneVideoButtons = [createSceneVideoButton];
   const gemmaThenCreateVideoButtons = [];
@@ -4110,6 +4143,7 @@ function openBuilder(node) {
         makeSettingsSection("Advanced Settings", [
           i2vWarmCooldownSection,
           i2vAdvancedNodeSettingsSection,
+          ltxMemorySafetySection,
         ]),
         rtvSceneImageAnchorSection,
         makeCreateSceneVideoButton(),
@@ -4620,6 +4654,10 @@ function openBuilder(node) {
       loras: [],
       pass1_sampler_name: "euler_ancestral",
       pass1_sigmas: DEFAULT_I2V_PASS1_SIGMAS,
+      ltx_chunk_feed_forward_enabled: DEFAULT_LTX_CHUNK_FEED_FORWARD_ENABLED,
+      ltx_chunk_feed_forward_chunks: DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS,
+      ltx_chunk_feed_forward_dim_threshold: DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD,
+      ltx_vhs_vae_batch_size: DEFAULT_LTX_VHS_VAE_BATCH_SIZE,
       pass1_inplace_strength: 1,
       pass1_inplace_bypass: false,
       pass2_sampler_name: "euler_ancestral",
@@ -12285,6 +12323,10 @@ function openBuilder(node) {
     i2vWidthInput.value = isIngredientsMode ? ingredientsWidth : repairedRegularWidth;
     i2vHeightInput.value = isIngredientsMode ? ingredientsHeight : repairedRegularHeight;
     i2vSeedInput.value = settings.seed || 69;
+    ltxChunkFeedForwardEnabled.input.checked = settings.ltx_chunk_feed_forward_enabled !== false;
+    ltxChunkFeedForwardChunks.value = Math.max(1, Math.min(100, Number(settings.ltx_chunk_feed_forward_chunks ?? DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS)));
+    ltxChunkFeedForwardDimThreshold.value = Math.max(0, Math.min(16384, Number(settings.ltx_chunk_feed_forward_dim_threshold ?? DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD)));
+    ltxVhsVaeBatchSize.value = Math.max(1, Math.min(4096, Number(settings.ltx_vhs_vae_batch_size ?? DEFAULT_LTX_VHS_VAE_BATCH_SIZE)));
     i2vTailLossFramesInput.value = Math.max(0, Number(settings.tail_loss_frames ?? 25));
     const isFLFMode = currentVideoMode() === "flf";
     i2vPreFramesInput.value = Math.max(0, Number(isFLFMode ? (settings.flf_pre_frames ?? 0) : (settings.pre_frames ?? 50)));
@@ -12353,6 +12395,7 @@ function openBuilder(node) {
     i2vVioletsCheckpointField.style.display = violetsProfile ? "flex" : "none";
     i2vLtxAudioTextEncoderField.style.display = violetsProfile ? "flex" : "none";
     violetsLtxRequiredPanel.style.display = violetsProfile ? "flex" : "none";
+    ltxMemorySafetySection.style.display = violetsProfile ? "" : "none";
   }
 
   function saveI2VVideoSettingsFromPanel() {
@@ -12447,6 +12490,10 @@ function openBuilder(node) {
       id_lora_duration: Number(previous.id_lora_duration || 5),
       pass1_sampler_name: (isI2VMode || isIdLoraMode) ? pass1SamplerName : (previous.pass1_sampler_name || "euler_ancestral"),
       pass1_sigmas: (isI2VMode || isIdLoraMode) ? pass1Sigmas : (previous.pass1_sigmas || DEFAULT_I2V_PASS1_SIGMAS),
+      ltx_chunk_feed_forward_enabled: Boolean(ltxChunkFeedForwardEnabled.input.checked),
+      ltx_chunk_feed_forward_chunks: Math.max(1, Math.min(100, Math.trunc(Number(ltxChunkFeedForwardChunks.value || DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS)))),
+      ltx_chunk_feed_forward_dim_threshold: Math.max(0, Math.min(16384, Math.trunc(Number(ltxChunkFeedForwardDimThreshold.value || DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD)))),
+      ltx_vhs_vae_batch_size: Math.max(1, Math.min(4096, Math.trunc(Number(ltxVhsVaeBatchSize.value || DEFAULT_LTX_VHS_VAE_BATCH_SIZE)))),
       pass1_inplace_strength: (isI2VMode || isIdLoraMode) ? Math.max(0, Math.min(1, Number(i2vPass1StrengthInput.value || 1))) : Number(previous.pass1_inplace_strength ?? 1),
       pass1_inplace_bypass: (isI2VMode || isIdLoraMode) ? Boolean(i2vPass1Bypass.input.checked) : Boolean(previous.pass1_inplace_bypass),
       pass2_sampler_name: (isI2VMode || isIdLoraMode) ? pass2SamplerName : (previous.pass2_sampler_name || "euler_ancestral"),
@@ -30976,6 +31023,10 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       duration: Math.max(0.25, Number(timelineSegmentDuration(segment) || settings.id_lora_duration || 5)),
       pass1_sampler_name: pass1SamplerName,
       pass1_sigmas: normalizeI2VSigmasText(pass1Sigmas, DEFAULT_I2V_PASS1_SIGMAS),
+      ltx_chunk_feed_forward_enabled: settings.ltx_chunk_feed_forward_enabled !== false,
+      ltx_chunk_feed_forward_chunks: Math.max(1, Math.min(100, Math.trunc(Number(settings.ltx_chunk_feed_forward_chunks ?? DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS)))),
+      ltx_chunk_feed_forward_dim_threshold: Math.max(0, Math.min(16384, Math.trunc(Number(settings.ltx_chunk_feed_forward_dim_threshold ?? DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD)))),
+      ltx_vhs_vae_batch_size: Math.max(1, Math.min(4096, Math.trunc(Number(settings.ltx_vhs_vae_batch_size ?? DEFAULT_LTX_VHS_VAE_BATCH_SIZE)))),
       pass1_inplace_strength: Math.max(0, Math.min(1, Number(settings.pass1_inplace_strength ?? 1))),
       pass1_inplace_bypass: Boolean(settings.pass1_inplace_bypass),
       pass2_sampler_name: pass2SamplerName,
@@ -39717,6 +39768,10 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       if (String(settings.pass1_sigmas || "").trim()) i2vPass1SigmasInput.value = normalizeI2VSigmasText(settings.pass1_sigmas, DEFAULT_I2V_PASS1_SIGMAS);
       if (I2V_SAMPLER_OPTIONS.includes(String(settings.pass2_sampler_name || ""))) i2vPass2SamplerSelect.value = settings.pass2_sampler_name;
       if (String(settings.pass2_sigmas || "").trim()) i2vPass2SigmasInput.value = normalizeI2VSigmasText(settings.pass2_sigmas, DEFAULT_I2V_PASS2_SIGMAS);
+      if (settings.ltx_chunk_feed_forward_enabled != null) ltxChunkFeedForwardEnabled.input.checked = settings.ltx_chunk_feed_forward_enabled !== false;
+      if (settings.ltx_chunk_feed_forward_chunks != null) ltxChunkFeedForwardChunks.value = Math.max(1, Math.min(100, Number(settings.ltx_chunk_feed_forward_chunks || DEFAULT_LTX_CHUNK_FEED_FORWARD_CHUNKS)));
+      if (settings.ltx_chunk_feed_forward_dim_threshold != null) ltxChunkFeedForwardDimThreshold.value = Math.max(0, Math.min(16384, Number(settings.ltx_chunk_feed_forward_dim_threshold || DEFAULT_LTX_CHUNK_FEED_FORWARD_DIM_THRESHOLD)));
+      if (settings.ltx_vhs_vae_batch_size != null) ltxVhsVaeBatchSize.value = Math.max(1, Math.min(4096, Number(settings.ltx_vhs_vae_batch_size || DEFAULT_LTX_VHS_VAE_BATCH_SIZE)));
       if (settings.msr_lora_name != null) ltxMsrLoraPicker.input.value = String(settings.msr_lora_name || ltxMsrLoraPicker.input.value || REQUIRED_LTX_MSR_LORA);
       if (settings.msr_first_pass_strength != null) ltxMsrFirstPassStrength.value = Number(settings.msr_first_pass_strength || ltxMsrFirstPassStrength.value || 1);
       i2vUseLora.input.checked = Boolean(settings.use_loras);

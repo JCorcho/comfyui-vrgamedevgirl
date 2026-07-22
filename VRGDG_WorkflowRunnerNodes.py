@@ -1737,6 +1737,67 @@ def _patch_violets_ltx23_fp8_profile(prompt, payload):
         "_meta": {"title": "Required Violets JoyAI LoRA (0.5 locked)"},
     }
 
+    # LTX 2.3's feed-forward activations are one of the dominant VRAM peaks on
+    # 16 GiB cards, especially as the planned frame count grows.  Keep the
+    # memory-saving patch inside the Violets profile so repository-default GGUF
+    # music-video graphs are unchanged.  Both sampler passes get their own
+    # patched MODEL stream; applying it to only pass 1 would leave the second
+    # pass capable of recreating the same OOM.
+    if _bool_payload(payload, "ltx_chunk_feed_forward_enabled", True):
+        chunks = _int_payload(payload, "ltx_chunk_feed_forward_chunks", 2, 1, 100)
+        dim_threshold = _int_payload(payload, "ltx_chunk_feed_forward_dim_threshold", 4096, 0, 16384)
+        first_chunk_id = "film:ltx_chunk_feed_forward_pass1"
+        second_chunk_id = "film:ltx_chunk_feed_forward_pass2"
+        # Rewire the existing graph before inserting the wrapper nodes so the
+        # replacement pass cannot rewrite the wrapper's own source MODEL into a
+        # self-reference.
+        optional_lora_node_id = _optional_api_node_id_by_class(
+            prompt,
+            "VRGDG_OptionalMultiLoraTwoPassStrengths",
+            fallback_ids=("937",),
+        )
+        if not optional_lora_node_id:
+            raise ValueError("The shared I2V template is missing its two-pass LoRA seam.")
+        _replace_api_input_refs(prompt, (optional_lora_node_id, 0), (first_chunk_id, 0))
+        _replace_api_input_refs(prompt, (optional_lora_node_id, 1), (second_chunk_id, 0))
+        prompt[first_chunk_id] = {
+            "class_type": "LTXVChunkFeedForward",
+            "inputs": {
+                "model": [optional_lora_node_id, 0],
+                "chunks": chunks,
+                "dim_threshold": dim_threshold,
+            },
+            "_meta": {"title": f"LTX Chunk FeedForward Pass 1 ({chunks} chunks)"},
+        }
+        prompt[second_chunk_id] = {
+            "class_type": "LTXVChunkFeedForward",
+            "inputs": {
+                "model": [optional_lora_node_id, 1],
+                "chunks": chunks,
+                "dim_threshold": dim_threshold,
+            },
+            "_meta": {"title": f"LTX Chunk FeedForward Pass 2 ({chunks} chunks)"},
+        }
+
+    # Decode the final latent in bounded image batches. This is separate from
+    # transformer chunking: it protects the VAE/output leg and keeps long clips
+    # from materializing every decoded frame on the GPU at once.
+    vae_batch_size = _int_payload(payload, "ltx_vhs_vae_batch_size", 8, 1, 4096)
+    decode_id = _optional_api_node_id_by_class(prompt, "VAEDecode", fallback_ids=("936",))
+    if decode_id:
+        decode_node = prompt.get(decode_id)
+        if isinstance(decode_node, dict):
+            decode_node["class_type"] = "VHS_VAEDecodeBatched"
+            decode_node.setdefault("inputs", {})["per_batch"] = vae_batch_size
+            decode_node.setdefault("_meta", {})["title"] = f"VAE Decode Batched ({vae_batch_size} frames)"
+            normalize_id = "film:ltx_video_frames_normalize"
+            _replace_api_input_refs(prompt, (decode_id, 0), (normalize_id, 0))
+            prompt[normalize_id] = {
+                "class_type": "VRGDG_NormalizeVideoFrames",
+                "inputs": {"images": [decode_id, 0]},
+                "_meta": {"title": "Normalize LTX video frame batch"},
+            }
+
 
 def _patch_i2v_api_prompt(prompt, payload):
     prompt = copy.deepcopy(prompt)
@@ -4240,15 +4301,43 @@ class VRGDG_ClearMemoryButtonUI:
         return ("Press Clear Memory to run the bundled ClearMemory_API workflow.",)
 
 
+class VRGDG_NormalizeVideoFrames:
+    """Flatten a video VAE's optional batch dimension into ComfyUI IMAGE frames.
+
+    LTX video VAEs can return [batch, frames, height, width, channels], while
+    VHS_VideoCombine consumes the regular [frames, height, width, channels]
+    IMAGE batch. The node keeps the decode bounded upstream and normalizes the
+    shape at the graph seam without copying the underlying tensor unnecessarily.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"images": ("IMAGE",)}}
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    FUNCTION = "normalize"
+    CATEGORY = "VRGDG/Video"
+
+    def normalize(self, images):
+        if getattr(images, "ndim", 0) == 5:
+            images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
+        if getattr(images, "ndim", 0) != 4:
+            raise ValueError(f"Expected a 4D or 5D video IMAGE tensor, got shape {tuple(images.shape)}")
+        return (images,)
+
+
 _ensure_workflow_runner_routes()
 
 
 NODE_CLASS_MAPPINGS = {
     "VRGDG_ZImageWorkflowRunnerUI": VRGDG_ZImageWorkflowRunnerUI,
     "VRGDG_ClearMemoryButtonUI": VRGDG_ClearMemoryButtonUI,
+    "VRGDG_NormalizeVideoFrames": VRGDG_NormalizeVideoFrames,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VRGDG_ZImageWorkflowRunnerUI": "VRGDG Z-Image Workflow Runner UI",
     "VRGDG_ClearMemoryButtonUI": "VRGDG Clear Memory Button",
+    "VRGDG_NormalizeVideoFrames": "VRGDG Normalize Video Frames",
 }

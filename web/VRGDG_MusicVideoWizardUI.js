@@ -1404,6 +1404,37 @@ export function openMusicVideoWizard(api = {}) {
     );
     advancedSamplerCard.append(advancedSamplerGrid);
 
+    const memorySafetyCard = el("div", "vrgdg-wizard-settings-card span-12");
+    memorySafetyCard.append(
+      el("div", "vrgdg-wizard-settings-title", "LTX Memory Safety"),
+      el("div", "vrgdg-wizard-settings-subtitle", "These controls mirror the Video Creator. They apply when the Violets LTX 2.3 FP8 profile is selected and keep long clips within limited VRAM by chunking transformer feed-forward work and decoding frames in bounded batches."),
+    );
+    const ltxChunkEnabled = document.createElement("label");
+    ltxChunkEnabled.style.cssText = "display:flex;align-items:center;gap:8px;color:#dbeafe;font-size:12px;font-weight:900;";
+    const ltxChunkEnabledInput = document.createElement("input");
+    ltxChunkEnabledInput.type = "checkbox";
+    ltxChunkEnabledInput.checked = settings.ltx_chunk_feed_forward_enabled !== false;
+    ltxChunkEnabled.append(ltxChunkEnabledInput, document.createTextNode("Enable LTX Chunk FeedForward"));
+    const ltxChunkCount = input(settings.ltx_chunk_feed_forward_chunks ?? 2, "number");
+    ltxChunkCount.min = "1";
+    ltxChunkCount.max = "100";
+    ltxChunkCount.step = "1";
+    const ltxChunkThreshold = input(settings.ltx_chunk_feed_forward_dim_threshold ?? 4096, "number");
+    ltxChunkThreshold.min = "0";
+    ltxChunkThreshold.max = "16384";
+    ltxChunkThreshold.step = "256";
+    const ltxVaeBatch = input(settings.ltx_vhs_vae_batch_size ?? 8, "number");
+    ltxVaeBatch.min = "1";
+    ltxVaeBatch.max = "4096";
+    ltxVaeBatch.step = "1";
+    const memorySafetyGrid = el("div", "vrgdg-wizard-settings-fields");
+    memorySafetyGrid.append(
+      settingField("Feed-forward chunks", ltxChunkCount, "Higher values reduce the peak transformer activation footprint at the cost of extra compute."),
+      settingField("Dimension threshold", ltxChunkThreshold, "Only dimensions at or above this threshold are chunked by KJNodes."),
+      settingField("VAE frames per batch", ltxVaeBatch, "Bounds the number of decoded frames held by the VAE/output leg at once."),
+    );
+    memorySafetyCard.append(ltxChunkEnabled, memorySafetyGrid);
+
     const loraCard = el("div", "vrgdg-wizard-settings-card span-4");
     loraCard.append(
       el("div", "vrgdg-wizard-settings-title", "LoRA Settings"),
@@ -1482,6 +1513,10 @@ export function openMusicVideoWizard(api = {}) {
           pass1_sigmas: pass1Sigmas.value,
           pass2_sampler_name: pass2Sampler.value,
           pass2_sigmas: pass2Sigmas.value,
+          ltx_chunk_feed_forward_enabled: Boolean(ltxChunkEnabledInput.checked),
+          ltx_chunk_feed_forward_chunks: Math.max(1, Math.min(100, Math.trunc(Number(ltxChunkCount.value || 2)))),
+          ltx_chunk_feed_forward_dim_threshold: Math.max(0, Math.min(16384, Math.trunc(Number(ltxChunkThreshold.value || 4096)))),
+          ltx_vhs_vae_batch_size: Math.max(1, Math.min(4096, Math.trunc(Number(ltxVaeBatch.value || 8)))),
           text_gemma_model: textGemma.input.value,
           vision_gemma_model: visionGemma.input.value,
           mmproj_file: mmproj.input.value,
@@ -1530,7 +1565,7 @@ export function openMusicVideoWizard(api = {}) {
     syncExtraLoraVisibility();
 
     const tip = el("div", "vrgdg-wizard-tip", "Tip: field descriptions explain what each setting controls. Apply Wizard Settings writes these values back to the normal builder settings used during render.");
-    layout.append(settingsCard, quickCard, imageModeCard, imageModelCard, modelCard, gemmaCard, renderBasicsCard, loraCard, advancedSamplerCard, tip);
+    layout.append(settingsCard, quickCard, imageModeCard, imageModelCard, modelCard, gemmaCard, renderBasicsCard, loraCard, advancedSamplerCard, memorySafetyCard, tip);
     content.append(layout);
   }
 
