@@ -2977,6 +2977,23 @@ def _probe_video_size(video_path, ffmpeg_path=None):
     return int(width_text), int(height_text)
 
 
+def _is_valid_video_file(video_path, ffmpeg_path=None):
+    """Return True only when FFprobe can read a video stream from the file.
+
+    A file can exist and have a non-zero size while FFmpeg is still writing its
+    MP4 trailer (or while it is a stale/truncated output from an earlier run).
+    The workflow runner must not treat those files as completed scene renders.
+    """
+    video_path = os.path.abspath(str(video_path or "").strip().strip('"'))
+    try:
+        if not os.path.isfile(video_path) or os.path.getsize(video_path) <= 0:
+            return False
+        _probe_video_size(video_path, ffmpeg_path or _find_ffmpeg_path())
+        return True
+    except Exception:
+        return False
+
+
 def _normalize_video_canvas(ffmpeg_path, source_path, target_path, width, height):
     width = int(width or 0)
     height = int(height or 0)
@@ -3150,6 +3167,8 @@ def _wait_for_stable_readable_file(path, timeout=20.0, interval=0.25):
 
 def _replace_file_with_retry(source_path, target_path):
     _wait_for_stable_readable_file(source_path)
+    if not _is_valid_video_file(source_path):
+        raise RuntimeError(f"Scene video is not a complete, probeable media file: {source_path}")
     temp_target = f"{target_path}.copying"
     index = 2
     while os.path.exists(temp_target):
@@ -3244,6 +3263,13 @@ def _collect_scene_video(payload):
                     except Exception as exc:
                         print(f"[VRGDG WorkflowRunner] Could not remove old scene video thumbnail '{target_thumbnail_path}': {exc}")
         _replace_file_with_retry(source_path, target_path)
+
+    # The target is now the handoff consumed by thumbnailing, timeline
+    # measurement, and stitching.  Validate it after the atomic replace so a
+    # stale/truncated file can never enter the rest of the pipeline.
+    _wait_for_stable_readable_file(target_path)
+    if not _is_valid_video_file(target_path):
+        raise RuntimeError(f"Collected scene video is not a complete, probeable media file: {target_path}")
 
     thumbnail_path = _create_scene_video_thumbnail(target_path, target_thumbnail_path)
     removed_files = []
@@ -3490,6 +3516,12 @@ def _find_scene_video_output(payload):
                     continue
                 if size <= 0 or (min_mtime and mtime + 1 < min_mtime):
                     continue
+                # Do not select an existing destination file (or a partially
+                # written MP4) while the current Comfy render is still being
+                # finalized.  Probe validation specifically catches missing
+                # MP4 trailers such as "moov atom not found".
+                if not _is_valid_video_file(path):
+                    continue
                 score = 0
                 # A Film render has a dedicated per-scene output folder. Prefer
                 # that explicit folder over a newer similarly named clip from a
@@ -3511,6 +3543,8 @@ def _find_scene_video_output(payload):
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     _score, _mtime, path, folder = candidates[0]
     _wait_for_stable_readable_file(path, timeout=8.0, interval=0.25)
+    if not _is_valid_video_file(path):
+        return {"video_path": "", "output_folder": "", "searched_folders": folders}
     return {
         "video_path": path,
         "output_folder": folder,
