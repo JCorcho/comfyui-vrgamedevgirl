@@ -208,6 +208,32 @@ Storyboard rules:
 Return only the final positive prompt."""
 
 
+_ANIMA_T2I_INSTRUCTIONS = """You are an Anima 2B anime text-to-image positive-prompt writer for a music-video storyboard.
+
+The user will provide a JSON scene-card bundle. Use `selected_scene_number` to choose the scene and output exactly one Anima-compatible positive prompt for that still image.
+
+Output format:
+- Output one concise comma-separated tag sequence only: no prose, markdown, labels, explanations, quotes, or line breaks.
+- Begin with this Anima quality prefix: `masterpiece, best quality, score_7, safe,`
+- Then order tags as: visible subject count, character identity, series or source context when explicitly known, optional artist tags prefixed with `@`, face/hair/wardrobe, pose and still action, shot/composition, setting/props, lighting/color/mood, then scene-specific visual details.
+- Keep tags lowercase unless an explicit proper name must remain recognizable. Use spaces inside multi-word tags (for example `long hair`), not underscores.
+
+Anima rules:
+- Use Danbooru-style tags, short natural-language descriptors, or a clean mixture of both. Prefer concrete tags over long prose.
+- Keep the positive prompt focused on the selected scene. Do not add negative terms, low-quality tags, anatomy corrections, watermark terms, or negative weights here; the saved VioletsT2I(Anima) workflow supplies its negative conditioning.
+- Do not invent artist tags. If an artist is explicitly identified in the selected scene, prefix the tag with `@`.
+- Do not invent or repeat LoRA syntax. Preserve a required character/style trigger phrase only when it is present in the selected scene context.
+
+Storyboard rules:
+- Create one cinematic still frame, never a video prompt. Do not describe animation, future camera movement, transitions, blinking, lip sync, or audio behavior.
+- Pull visible subjects only from the selected scene's `subject_refs`. Every mapped subject must be visibly present; do not add unmapped people, crowds, or duplicates unless the selected scene explicitly requires them.
+- If `vocal_status.no_character_present` is true, omit all mapped characters and build the image from location, props, environment, and atmosphere.
+- Use the selected scene's location, mapped descriptions, shot type, consistency phrase, story beat, and performance direction as visual guidance. Do not mention JSON, IDs, files, references, metadata, or instructions.
+- Preserve the song's scene identity and infer only missing still-image details that fit it.
+
+Return only the final positive prompt."""
+
+
 def _vrgdg_textfile_path(folder_name, file_name):
     return os.path.join(
         folder_paths.get_output_directory(),
@@ -772,6 +798,7 @@ _BUILDER_INSTRUCTION_DEFAULTS = {
     "i2v": _I2V_INSTRUCTIONS,
     "krea2_t2i": _STANDARD_IMAGE_T2I_INSTRUCTIONS,
     "nano_b_t2i": _NANO_B_T2I_INSTRUCTIONS,
+    "anima_t2i": _ANIMA_T2I_INSTRUCTIONS,
     "pony_t2i": _PONY_T2I_INSTRUCTIONS,
     "rtv": _T2V_INSTRUCTIONS,
     "t2v": _T2V_INSTRUCTIONS,
@@ -787,6 +814,7 @@ _BUILDER_INSTRUCTION_LABELS = {
     "i2v": "Image to Video",
     "krea2_t2i": "Krea 2 Text to Image",
     "nano_b_t2i": "Nano B Text to Image",
+    "anima_t2i": "Anima Text to Image",
     "pony_t2i": "Pony Text to Image",
     "rtv": "Reference to Video",
     "t2v": "Text to Video",
@@ -800,6 +828,7 @@ _BUILDER_INSTRUCTION_PRESET_GROUPS = {
     "flow_gpt_t2i": "reference_image_t2i",
     "flux_klein_t2i": "reference_image_t2i",
     "nano_b_t2i": "reference_image_t2i",
+    "anima_t2i": "anima_t2i",
     "pony_t2i": "pony_t2i",
 }
 
@@ -807,6 +836,7 @@ _BUILDER_INSTRUCTION_PRESET_GROUP_LABELS = {
     "standard_image_t2i": "Standard Image T2I",
     "reference_image_t2i": "Reference/Image Edit T2I",
     "pony_t2i": "Pony T2I",
+    "anima_t2i": "Anima T2I",
 }
 
 
@@ -1575,6 +1605,47 @@ def _scene_preview_paths(project_folder, scene_number):
             paths.append(os.path.abspath(path))
     paths.sort(key=lambda item: os.path.getmtime(item))
     return paths
+
+
+def _scene_media_status(payload):
+    """Return resumable scene image paths without touching project files.
+
+    Canonical zimage_approved files win; the newest archived preview is a
+    fallback for projects created before the canonical image was saved.
+    """
+    project_folder = os.path.abspath(str(payload.get("project_folder", "") or "").strip().strip('"'))
+    if not project_folder:
+        raise ValueError("Project folder is empty.")
+    requested = payload.get("scene_numbers")
+    scene_numbers = []
+    if isinstance(requested, (list, tuple)):
+        for value in requested:
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                continue
+            if number > 0 and number not in scene_numbers:
+                scene_numbers.append(number)
+    if not scene_numbers:
+        scene_numbers = sorted(_project_scene_numbers(project_folder))
+    images = {}
+    for scene_number in scene_numbers:
+        canonical = next(
+            (path for path in (
+                _scene_image_path(project_folder, scene_number, ".png"),
+                _scene_image_path(project_folder, scene_number, ".jpg"),
+                _scene_image_path(project_folder, scene_number, ".jpeg"),
+                _scene_image_path(project_folder, scene_number, ".webp"),
+            ) if os.path.isfile(path)),
+            "",
+        )
+        if canonical:
+            images[str(scene_number)] = {"path": os.path.abspath(canonical), "kind": "canonical"}
+            continue
+        previews = _scene_preview_paths(project_folder, scene_number)
+        if previews:
+            images[str(scene_number)] = {"path": previews[-1], "kind": "preview"}
+    return {"project_folder": project_folder, "images": images}
 
 
 def _backup_session_file(project_folder):
@@ -8947,6 +9018,15 @@ def _ensure_music_builder_routes():
         try:
             payload = await request.json()
             result = _save_scene_image(payload)
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, **result})
+
+    @server_instance.routes.post("/vrgdg/music_builder/scene_media_status")
+    async def vrgdg_music_builder_scene_media_status(request):
+        try:
+            payload = await request.json()
+            result = _scene_media_status(payload)
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         return web.json_response({"ok": True, **result})

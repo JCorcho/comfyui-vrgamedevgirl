@@ -2960,6 +2960,7 @@ function openBuilder(node) {
   }
   const zImageCard = makeImageModelCard("ZImage", "zimage");
   const ponyCard = makeImageModelCard("Pony", "pony");
+  const animaCard = makeImageModelCard("Anima", "anima");
   const fluxKleinCard = makeImageModelCard("Flux Klein", "flux_klein");
   const nbImageCard = makeImageModelCard("Nano B", "nano_banana");
   const ernieImageCard = makeImageModelCard("Ernie", "ernie_image");
@@ -2968,7 +2969,7 @@ function openBuilder(node) {
   const zEnhanceCard = makeImageModelCard("Enhance", "z_enhance");
   const loadCustomImageButton = makeImageModelCard("+ Custom", "custom_image");
   loadCustomImageButton.title = "Load a custom image for the selected scene";
-  imageModelChooser.append(zImageCard, ponyCard, fluxKleinCard, nbImageCard, ernieImageCard, krea2TwoPassCard, flowGptCard, zEnhanceCard, loadCustomImageButton);
+  imageModelChooser.append(zImageCard, ponyCard, animaCard, fluxKleinCard, nbImageCard, ernieImageCard, krea2TwoPassCard, flowGptCard, zEnhanceCard, loadCustomImageButton);
   imageModelChooserWrap.append(imageModelChooserLabel, imageModelChooser);
   const zImageModePanel = document.createElement("div");
   zImageModePanel.style.cssText = "display:flex;flex-direction:column;gap:10px;";
@@ -2982,6 +2983,16 @@ function openBuilder(node) {
   ponyPrompt.style.cssText = "width:100%;box-sizing:border-box;min-height:132px;resize:vertical;border:1px solid #3f3f46;border-radius:6px;background:#18181b;color:#fafafa;padding:9px;font-size:12px;line-height:1.45;";
   const ponyGemmaButton = makeButton("Gemma T2I", "primary");
   const editPonyT2IInstructionsButton = makeButton("Edit Pony Prompt Instructions");
+  const animaModePanel = document.createElement("div");
+  animaModePanel.style.cssText = "display:none;flex-direction:column;gap:10px;";
+  const animaWorkflowNotice = document.createElement("div");
+  animaWorkflowNotice.textContent = "Uses VioletsT2I(Anima).json from your ComfyUI user workflows. Model, LoRA, sampler, VAE, resolution, and output settings remain in that workflow; this panel sends the scene T2I prompt into its positive conditioning.";
+  animaWorkflowNotice.style.cssText = ponyWorkflowNotice.style.cssText;
+  const animaPrompt = document.createElement("textarea");
+  animaPrompt.placeholder = "Anima T2I prompt...";
+  animaPrompt.style.cssText = ponyPrompt.style.cssText;
+  const animaGemmaButton = makeButton("Gemma T2I", "primary");
+  const editAnimaT2IInstructionsButton = makeButton("Edit Anima Prompt Instructions");
   const fluxKleinModePanel = document.createElement("div");
   fluxKleinModePanel.style.cssText = "display:none;flex-direction:column;gap:10px;";
   const ernieImageModePanel = document.createElement("div");
@@ -3634,6 +3645,13 @@ function openBuilder(node) {
     ponyCreateButtons.push(button);
     return button;
   }
+  const animaCreateButton = makeButton("Create with Anima", "primary");
+  const animaCreateButtons = [animaCreateButton];
+  function makeAnimaCreateButton() {
+    const button = makeButton("Create with Anima", "primary");
+    animaCreateButtons.push(button);
+    return button;
+  }
   const ernieCreateButton = makeButton("Create with Ernie", "primary");
   const ernieCreateButtons = [ernieCreateButton];
   function makeErnieCreateButton() {
@@ -3815,6 +3833,13 @@ function openBuilder(node) {
     ponyGemmaButton,
     editPonyT2IInstructionsButton,
     makePonyCreateButton(),
+  ]));
+  animaModePanel.append(makeSettingsPanel([
+    animaWorkflowNotice,
+    makeField("T2I prompt", animaPrompt),
+    animaGemmaButton,
+    editAnimaT2IInstructionsButton,
+    makeAnimaCreateButton(),
   ]));
   fluxKleinModePanel.append(fluxKleinPanel);
   ernieImageModePanel.append(ernieImagePanel);
@@ -4135,6 +4160,7 @@ function openBuilder(node) {
     imageContinuityPanel,
     zImageModePanel,
     ponyModePanel,
+    animaModePanel,
     fluxKleinModePanel,
     ernieImageModePanel,
     krea2TwoPassModePanel,
@@ -8511,7 +8537,7 @@ function openBuilder(node) {
 
   function imageTriggerPhraseForSegment(segment = activeSegment(), imageMode = state.imageModelMode) {
     if (!segment) return state.imageTriggerPhrase || "";
-    if (imageMode === "pony") return "";
+    if (imageMode === "pony" || imageMode === "anima") return "";
     if (imageMode === "flux_klein") return fluxKleinSettingsForSegment(segment).image_trigger_phrase || "";
     if (imageMode === "nano_banana") return "";
     if (imageMode === "ernie_image") return segment.use_scene_ernie_image_settings ? (segment.ernie_image_settings?.image_trigger_phrase || "") : (state.ernieImageSettings?.image_trigger_phrase || "");
@@ -8574,6 +8600,7 @@ function openBuilder(node) {
       flowGptPrompt.value = cleanPrompt;
       zEnhancePromptPreview.value = cleanPrompt;
       ponyPrompt.value = cleanPrompt;
+      animaPrompt.value = cleanPrompt;
     }
     return cleanPrompt;
   }
@@ -11821,6 +11848,7 @@ function openBuilder(node) {
     settings.enabled = mode === "flux_klein";
     zImageModePanel.style.display = mode === "zimage" ? "flex" : "none";
     ponyModePanel.style.display = mode === "pony" ? "flex" : "none";
+    animaModePanel.style.display = mode === "anima" ? "flex" : "none";
     fluxKleinModePanel.style.display = mode === "flux_klein" || mode === "nano_banana" ? "flex" : "none";
     ernieImageModePanel.style.display = mode === "ernie_image" ? "flex" : "none";
     krea2TwoPassModePanel.style.display = mode === "krea2_2pass" ? "flex" : "none";
@@ -11834,7 +11862,7 @@ function openBuilder(node) {
     nbImagePanel.style.display = mode === "nano_banana" ? "flex" : "none";
     ernieImagePanel.style.display = mode === "ernie_image" ? "flex" : "none";
     krea2TwoPassPanel.style.display = mode === "krea2_2pass" ? "flex" : "none";
-    for (const card of [zImageCard, ponyCard, fluxKleinCard, nbImageCard, ernieImageCard, krea2TwoPassCard, flowGptCard, zEnhanceCard]) {
+    for (const card of [zImageCard, ponyCard, animaCard, fluxKleinCard, nbImageCard, ernieImageCard, krea2TwoPassCard, flowGptCard, zEnhanceCard]) {
       const active = card.dataset.model === mode;
       card.style.borderColor = active ? "#0891b2" : "#3f3f46";
       card.style.background = active ? "#06b6d4" : "#27272a";
@@ -11852,6 +11880,7 @@ function openBuilder(node) {
     fluxNotes.value = segment?.flux_notes || "";
     fluxPrompt.value = segment?.t2i_prompt || segment?.flux_prompt || "";
     ponyPrompt.value = segment?.t2i_prompt || "";
+    animaPrompt.value = segment?.t2i_prompt || "";
     fluxUnetPicker.input.value = chooseModelValue(
       fluxUnetPicker.options || [],
       settings.unet_name || "flux\\flux-2-klein-4b-fp8.safetensors",
@@ -28455,6 +28484,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   function builderImageInstructionKey(imageMode) {
     if (imageMode === "zimage") return "zimage_t2i";
     if (imageMode === "pony") return "pony_t2i";
+    if (imageMode === "anima") return "anima_t2i";
     if (imageMode === "ernie_image") return "ernie_t2i";
     if (imageMode === "krea2_2pass") return "krea2_t2i";
     if (imageMode === "flux_klein") return "flux_klein_t2i";
@@ -28580,6 +28610,13 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     return { prompt, promptGraph: built.prompt };
   }
 
+  async function buildAnimaImageWorkflow(segment) {
+    const prompt = ensureSegmentT2IPromptHasTrigger(segment, "anima", segment.notes || "");
+    if (!prompt) throw new Error(`${sceneDisplayName(segment, segmentIndexInfo(segment).index)}: T2I prompt is missing.`);
+    const built = await postJson("/anima_t2i/build_prompt", { prompt }, 120000);
+    return { prompt, promptGraph: built.prompt };
+  }
+
   async function completePonyImageForSegment(segment, prompt, images) {
     for (const image of images) {
       await archiveGeneratedSceneImage(segment, image);
@@ -28611,6 +28648,37 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     return await completePonyImageForSegment(segment, built.prompt, images);
   }
 
+  async function completeAnimaImageForSegment(segment, prompt, images) {
+    for (const image of images) {
+      await archiveGeneratedSceneImage(segment, image);
+    }
+    syncSegmentT2IPrompt(segment, prompt);
+    segment.image = images[images.length - 1] || null;
+    segment.custom_image_path = "";
+    segment.custom_image_data = "";
+    segment.custom_image_name = "";
+    segment.approved_image_path = "";
+    segment.preview_mode = "image";
+    syncPreview(segment);
+    render();
+    return images;
+  }
+
+  async function createAnimaImageForSegment(segment, progress = null, percentBase = 45, percentSpan = 35, label = "Anima") {
+    state.activeId = segment.id;
+    syncInspector();
+    progress?.set(`${label}: building VioletsT2I(Anima) workflow...`, percentBase + percentSpan * 0.25);
+    const built = await buildAnimaImageWorkflow(segment);
+    progress?.set(`${label}: queueing Anima workflow...`, percentBase + percentSpan * 0.45);
+    const queued = await queueWorkflowPrompt(built.promptGraph);
+    const promptId = queued?.prompt_id;
+    if (!promptId) throw new Error("ComfyUI queued the Anima workflow but did not return a prompt_id.");
+    const images = await waitForImages(promptId, (message) => {
+      progress?.set(`${label}: ${message}\nPrompt ID: ${promptId}`, percentBase + percentSpan * 0.72);
+    });
+    return await completeAnimaImageForSegment(segment, built.prompt, images);
+  }
+
   async function previewPonyImage() {
     const segment = requireActiveSegment();
     if (!segment) return;
@@ -28640,6 +28708,38 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       toast(String(error?.message || error), true);
     } finally {
       setButtonGroupState(ponyCreateButtons, { disabled: false, text: "Create with Pony" });
+    }
+  }
+
+  async function previewAnimaImage() {
+    const segment = requireActiveSegment();
+    if (!segment) return;
+    updateActiveFromInputs();
+    const prompt = String(segment.t2i_prompt || segment.notes || "").trim();
+    if (!prompt) {
+      toast("Anima needs a T2I prompt first. Create one with Gemma T2I, type one here, or add scene notes.", true);
+      return;
+    }
+    let progress = null;
+    let ranAnima = false;
+    try {
+      setButtonGroupState(animaCreateButtons, { disabled: true, text: "Creating..." });
+      progress = createProgressWindow("Creating Anima preview");
+      progress.set("Autosaving session/SRT before Anima...", 8);
+      await autoSaveSessionQuiet("Anima preview");
+      ranAnima = true;
+      await createAnimaImageForSegment(segment, progress, 15, 75, "Anima preview");
+      await autoSaveSessionQuiet("Anima preview complete");
+      await runImageMemoryCleanupQuiet(progress, "Anima preview", 94);
+      progress.set("Anima preview ready.", 100);
+      progress.close(900);
+      toast("Anima preview ready.");
+    } catch (error) {
+      if (ranAnima) await runImageMemoryCleanupQuiet(progress, "failed Anima preview", 100);
+      progress?.set(`Error:\n${String(error?.message || error)}`, 100);
+      toast(String(error?.message || error), true);
+    } finally {
+      setButtonGroupState(animaCreateButtons, { disabled: false, text: "Create with Anima" });
     }
   }
 
@@ -30926,6 +31026,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
 
   function imageModeDisplayLabel(mode = state.imageModelMode || "zimage", compact = false) {
     if (mode === "pony") return "Pony";
+    if (mode === "anima") return "Anima";
     if (mode === "flux_klein") return compact ? "Flux/Klein" : "Flux/Klein";
     if (mode === "nano_banana") return compact ? "Nano B" : "NanoBanana";
     if (mode === "ernie_image") return compact ? "Ernie" : "Ernie Image";
@@ -32104,6 +32205,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   async function createImageForSegmentInCurrentMode(segment, imageMode, progress, percentBase, percentSpan, label, options = {}) {
     if (imageMode === "pony") {
       await createPonyImageForSegment(segment, progress, percentBase, percentSpan, `${label}: Pony`);
+    } else if (imageMode === "anima") {
+      await createAnimaImageForSegment(segment, progress, percentBase, percentSpan, `${label}: Anima`);
     } else if (imageMode === "ernie_image") {
       await createErnieImageForSegment(segment, progress, percentBase, percentSpan, `${label}: Ernie image`, options);
     } else if (imageMode === "krea2_2pass") {
@@ -32935,6 +33038,42 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     const scenes = batchTargetItems(sceneScope);
     if (mode === "redo_prompts_images" || mode === "keep_prompts_redo_images") return scenes;
     return scenes.filter(({ segment }) => !segmentImageSource(segment));
+  }
+
+  async function hydrateExistingProjectImagesForBuild(sceneScope = "all") {
+    const projectFolder = String(projectInput.value || state.projectFolder || "").trim();
+    if (!projectFolder) return 0;
+    const targets = batchTargetItems(sceneScope);
+    if (!targets.length) return 0;
+    const sceneNumbers = targets.map(({ segment }) => sceneSlotNumber(segment)).filter((value) => Number.isFinite(Number(value)));
+    if (!sceneNumbers.length) return 0;
+    let data;
+    try {
+      data = await postJson("/vrgdg/music_builder/scene_media_status", {
+        project_folder: projectFolder,
+        scene_numbers: sceneNumbers,
+      }, 30000);
+    } catch (error) {
+      console.warn("[VRGDG Music Builder] Existing scene image scan failed:", error);
+      return 0;
+    }
+    const found = data?.images && typeof data.images === "object" ? data.images : {};
+    let hydrated = 0;
+    for (const { segment } of targets) {
+      ensureSegmentRuntimeFields(segment);
+      if (segment.image_assignment_cleared || segmentImageSource(segment)) continue;
+      const media = found[String(sceneSlotNumber(segment))];
+      if (!media?.path) continue;
+      addSceneImageHistoryPath(segment, media.path);
+      if (media.kind === "canonical") segment.approved_image_path = media.path;
+      hydrated += 1;
+    }
+    if (hydrated) {
+      ensureAllSegmentRuntimeFields();
+      syncInspector();
+      render();
+    }
+    return hydrated;
   }
 
   function endFrameSegmentsForMode(mode = "resume_missing", sceneScope = "all") {
@@ -34111,12 +34250,13 @@ Chrome vault corridor = Sealed industrial passage...</pre>
 
   async function zImageAllScenes(options = {}) {
     updateActiveFromInputs();
-    const imageMode = options.imageMode === "pony" ? "pony" : "zimage";
-    const modelLabel = imageMode === "pony" ? "Pony" : "Z-Image";
+    const imageMode = ["pony", "anima"].includes(options.imageMode) ? options.imageMode : "zimage";
+    const modelLabel = imageMode === "pony" ? "Pony" : imageMode === "anima" ? "Anima" : "Z-Image";
     const imageRunMode = options.imageRunMode || "resume_missing";
     const sceneScope = normalizeBatchScope(options.sceneScope);
     const forceNewImages = imageRunMode === "redo_prompts_images" || imageRunMode === "keep_prompts_redo_images";
     const redoPrompts = imageRunMode === "redo_prompts_images";
+    await hydrateExistingProjectImagesForBuild(sceneScope);
     const missing = validateZImageAllReady({ imageRunMode, sceneScope });
     const progress = createProgressWindow(`${modelLabel} All Scenes`);
     if (missing.length) {
@@ -34134,8 +34274,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     try {
       state.batchCancelled = false;
       zImageAllButton.disabled = true;
-      zImageAllButton.textContent = imageMode === "pony" ? "Ponifying..." : "Z-Imaging...";
-      setButtonGroupState(imageMode === "pony" ? ponyCreateButtons : zCreateButtons, { disabled: true });
+      zImageAllButton.textContent = imageMode === "pony" ? "Ponifying..." : imageMode === "anima" ? "Animating..." : "Z-Imaging...";
+      setButtonGroupState(imageMode === "pony" ? ponyCreateButtons : imageMode === "anima" ? animaCreateButtons : zCreateButtons, { disabled: true });
       createT2IButton.disabled = true;
       progress.set(`Autosaving session/SRT before Z-Image All (${batchScopeLabel(sceneScope)})...`, 3);
       await saveSessionForSceneVideo();
@@ -34183,9 +34323,9 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         await runClearMemoryWorkflowQuiet(progress, "Image All prompt pass", 42);
       }
       progress.set(`Image All: creating ${scenes.length} ${modelLabel} image${scenes.length === 1 ? "" : "s"} from saved prompts...`, 45);
-      if (imageMode === "pony") {
+      if (imageMode === "pony" || imageMode === "anima") {
         await runAdaptiveSceneWorkflowQueue(scenes, {
-          modelLabel: "Pony",
+          modelLabel,
           progress,
           planPercent: 45,
           shouldCancel: () => state.batchCancelled,
@@ -34197,8 +34337,8 @@ Chrome vault corridor = Sealed industrial passage...</pre>
             state.activeId = segment.id;
             syncInspector();
             render();
-            progress.set(`Pony image pass ${index + 1}/${total}: ${sceneDisplayName(segment, sceneIndex)}\nBuilding the workflow from the saved T2I prompt...`, base);
-            const built = await buildPonyImageWorkflow(segment);
+            progress.set(`${modelLabel} image pass ${index + 1}/${total}: ${sceneDisplayName(segment, sceneIndex)}\nBuilding the workflow from the saved T2I prompt...`, base);
+            const built = imageMode === "pony" ? await buildPonyImageWorkflow(segment) : await buildAnimaImageWorkflow(segment);
             return {
               prompt: built.promptGraph,
               sourcePrompt: built.prompt,
@@ -34212,10 +34352,11 @@ Chrome vault corridor = Sealed industrial passage...</pre>
             assertBatchNotStopped();
             state.activeId = job.segment.id;
             syncInspector();
-            await completePonyImageForSegment(job.segment, job.sourcePrompt, images);
-            await autoSaveSessionQuiet(`Pony All scene ${job.sceneIndex + 1}`);
+            if (imageMode === "pony") await completePonyImageForSegment(job.segment, job.sourcePrompt, images);
+            else await completeAnimaImageForSegment(job.segment, job.sourcePrompt, images);
+            await autoSaveSessionQuiet(`${modelLabel} All scene ${job.sceneIndex + 1}`);
             const completePercent = Math.min(98, job.base + Math.max(1, Math.floor(40 / job.total)));
-            progress.set(`Pony image pass ${job.index + 1}/${job.total}: ${sceneDisplayName(job.segment, job.sceneIndex)} complete.\nKeeping Pony resident for queued scenes.`, completePercent);
+            progress.set(`${modelLabel} image pass ${job.index + 1}/${job.total}: ${sceneDisplayName(job.segment, job.sceneIndex)} complete.\nKeeping ${modelLabel} resident for queued scenes.`, completePercent);
           },
         });
       } else {
@@ -34265,7 +34406,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     } finally {
       zImageAllButton.disabled = false;
       zImageAllButton.textContent = "Image All";
-      setButtonGroupState(imageMode === "pony" ? ponyCreateButtons : zCreateButtons, { disabled: false, text: imageMode === "pony" ? "Create with Pony" : "Create Z-Image" });
+      setButtonGroupState(imageMode === "pony" ? ponyCreateButtons : imageMode === "anima" ? animaCreateButtons : zCreateButtons, { disabled: false, text: imageMode === "pony" ? "Create with Pony" : imageMode === "anima" ? "Create with Anima" : "Create Z-Image" });
       createT2IButton.disabled = false;
       state.batchCancelled = false;
       syncInspector();
@@ -35373,6 +35514,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       zImageAllButton.disabled = true;
       state.batchCancelled = false;
       if (!(await ensureAudioOrOfferSilentTimeline({ sceneScope }))) return;
+      await hydrateExistingProjectImagesForBuild(sceneScope);
       while (true) {
         attempt += 1;
         progress = createProgressWindow(attempt > 1 ? `Build Full Video retry ${attempt}/${maxAutoRetries + 1}` : "Build Full Video");
@@ -35381,7 +35523,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
           if (videoMode === "t2v" || videoMode === "rtv") {
             progress.set(`Stage 1/3: ${videoModeDisplayLabel(videoMode)} mode skips image generation.`, 20);
           } else {
-            const imageStage = (state.imageModelMode || "") === "pony" ? "Pony image pass" : state.imageModelMode === "flux_klein" ? "Flux/Klein image pass" : state.imageModelMode === "nano_banana" ? "NanoBanana image pass" : state.imageModelMode === "flow_gpt" ? "Flow/GPT image pass" : state.imageModelMode === "ernie_image" ? "Ernie image pass" : state.imageModelMode === "krea2_2pass" ? "Krea 2 image pass" : "Z-Image pass";
+            const imageStage = (state.imageModelMode || "") === "pony" ? "Pony image pass" : state.imageModelMode === "anima" ? "Anima image pass" : state.imageModelMode === "flux_klein" ? "Flux/Klein image pass" : state.imageModelMode === "nano_banana" ? "NanoBanana image pass" : state.imageModelMode === "flow_gpt" ? "Flow/GPT image pass" : state.imageModelMode === "ernie_image" ? "Ernie image pass" : state.imageModelMode === "krea2_2pass" ? "Krea 2 image pass" : "Z-Image pass";
             progress.set(`Stage 1/3: ${imageStage}...`, 5);
             const imageMode = state.imageModelMode || "zimage";
             const imageRunMode = buildMode === "fresh_rebuild" ? "redo_prompts_images" : "resume_missing";
@@ -39125,12 +39267,13 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   async function confirmAndRunZImageAll() {
     const imageMode = state.imageModelMode || "zimage";
     const usePonyMode = imageMode === "pony";
+    const useAnimaMode = imageMode === "anima";
     const useFluxKleinMode = imageMode === "flux_klein";
     const useNBMode = imageMode === "nano_banana";
     const useErnieMode = imageMode === "ernie_image";
     const useKrea2TwoPassMode = imageMode === "krea2_2pass";
     const useFlowGptMode = imageMode === "flow_gpt";
-    const modelLabel = usePonyMode ? "Pony" : useFluxKleinMode ? "Flux/Klein" : useNBMode ? "NanoBanana" : useErnieMode ? "Ernie" : useKrea2TwoPassMode ? "Krea 2" : useFlowGptMode ? "Flow/GPT" : "ZImage";
+    const modelLabel = usePonyMode ? "Pony" : useAnimaMode ? "Anima" : useFluxKleinMode ? "Flux/Klein" : useNBMode ? "NanoBanana" : useErnieMode ? "Ernie" : useKrea2TwoPassMode ? "Krea 2" : useFlowGptMode ? "Flow/GPT" : "ZImage";
     const imageModeChoices = [
       {
         value: "zimage",
@@ -39141,6 +39284,11 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         value: "pony",
         label: "Pony",
         description: "Use VioletsT2I(Pony).json with each scene's saved T2I prompt.",
+      },
+      {
+        value: "anima",
+        label: "Anima",
+        description: "Use VioletsT2I(Anima).json with each scene's saved T2I prompt.",
       },
       {
         value: "flux_klein",
@@ -39228,7 +39376,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       ],
     }, GEMMA_VIDEO_PROMPT_TIMEOUT_MS);
     if (!action?.mode) return;
-    const selectedImageMode = ["zimage", "pony", "flux_klein", "nano_banana", "ernie_image", "krea2_2pass", "flow_gpt"].includes(action.imageMode) ? action.imageMode : imageMode;
+    const selectedImageMode = ["zimage", "pony", "anima", "flux_klein", "nano_banana", "ernie_image", "krea2_2pass", "flow_gpt"].includes(action.imageMode) ? action.imageMode : imageMode;
     const sceneScope = normalizeBatchScope(action.sceneScope);
     state.imageModelMode = selectedImageMode;
     state.fluxKleinSettings.image_model_mode = selectedImageMode;
@@ -39743,7 +39891,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     };
     const normalizeWizardImageMode = (mode) => {
       const normalized = String(mode || "").trim().toLowerCase();
-      return ["zimage", "pony", "flux_klein", "nano_banana", "ernie_image", "krea2_2pass", "flow_gpt"].includes(normalized)
+    return ["zimage", "pony", "anima", "flux_klein", "nano_banana", "ernie_image", "krea2_2pass", "flow_gpt"].includes(normalized)
         ? normalized
         : "zimage";
     };
@@ -40432,6 +40580,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         imageModeOptions: [
           { value: "zimage", label: imageModeDisplayLabel("zimage") },
           { value: "pony", label: imageModeDisplayLabel("pony") },
+          { value: "anima", label: imageModeDisplayLabel("anima") },
           { value: "flux_klein", label: imageModeDisplayLabel("flux_klein") },
           { value: "ernie_image", label: imageModeDisplayLabel("ernie_image") },
           { value: "krea2_2pass", label: imageModeDisplayLabel("krea2_2pass") },
@@ -41256,6 +41405,17 @@ Chrome vault corridor = Sealed industrial passage...</pre>
   ponyPrompt.addEventListener("change", () => {
     autoSaveSessionQuiet("Pony T2I prompt updated").catch(() => null);
   });
+  for (const button of animaCreateButtons) button.onclick = previewAnimaImage;
+  animaGemmaButton.onclick = createT2IPromptWithGemma;
+  editAnimaT2IInstructionsButton.onclick = () => openBuilderInstructionEditor("anima_t2i");
+  animaPrompt.addEventListener("input", () => {
+    const segment = activeSegment();
+    if (!segment) return;
+    syncSegmentT2IPrompt(segment, animaPrompt.value);
+  });
+  animaPrompt.addEventListener("change", () => {
+    autoSaveSessionQuiet("Anima T2I prompt updated").catch(() => null);
+  });
   for (const button of ernieCreateButtons) button.onclick = previewErnieImage;
   for (const button of krea2TwoPassCreateButtons) button.onclick = previewKrea2TwoPassImage;
   for (const button of fluxCreateButtons) button.onclick = previewFluxKleinImage;
@@ -41292,6 +41452,14 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     state.fluxKleinSettings.enabled = false;
     syncFluxKleinPanel();
     autoSaveSessionQuiet("image mode changed to Pony").catch(() => null);
+  };
+  animaCard.onclick = () => {
+    pushHistory();
+    state.imageModelMode = "anima";
+    state.fluxKleinSettings.image_model_mode = "anima";
+    state.fluxKleinSettings.enabled = false;
+    syncFluxKleinPanel();
+    autoSaveSessionQuiet("image mode changed to Anima").catch(() => null);
   };
   fluxKleinCard.onclick = () => {
     pushHistory();
