@@ -288,8 +288,7 @@ export function openScriptToFilmPlanner(config) {
     const name = String(loraName || "").trim();
     if (!name) return null;
     const key = name.toLowerCase();
-    const current = (loraKnowledge.entries || []).find((item) => String(item?.lora_name || "").toLowerCase() === key);
-    if (activeCivitaiDetection.has(key) || (!force && (attemptedCivitaiDetection.has(key) || String(current?.civitai_model_id || "").trim()))) return null;
+    if (activeCivitaiDetection.has(key) || (!force && attemptedCivitaiDetection.has(key))) return null;
     activeCivitaiDetection.add(key);
     attemptedCivitaiDetection.add(key);
     try {
@@ -299,7 +298,10 @@ export function openScriptToFilmPlanner(config) {
       }
       if (researched?.found) {
         const detail = researched.researched && researched.civitai_name ? `: ${researched.civitai_name}` : "";
-        status.textContent = `Civitai model ID auto-filled for ${name}${detail}.`;
+        const triggerCount = Array.isArray(researched?.entry?.civitai_trigger_words) ? researched.entry.civitai_trigger_words.length : 0;
+        status.textContent = researched.researched
+          ? `Civitai metadata refreshed for ${name}${detail}; ${triggerCount} trigger word${triggerCount === 1 ? "" : "s"} imported.`
+          : `Civitai model ID auto-filled for ${name}${detail}.`;
       } else {
         status.textContent = `No verified Civitai match was available for ${name}; its local metadata remains usable.`;
       }
@@ -467,10 +469,12 @@ export function openScriptToFilmPlanner(config) {
       const baseModel = field("Base model recommendation", entry.base_model_recommendation || "unknown", () => {});
       const recommendedWeight = field("Recommended weight", entry.recommended_weight ?? 1, () => {}, { type: "number" });
       const triggerMap = field("Trigger map JSON", JSON.stringify(entry.trigger_map || {}, null, 2), () => {}, { multiline: true });
+      const civitaiWords = field("Civitai trigger words (auto-imported)", (entry.civitai_trigger_words || []).join(", "), () => {}, { multiline: true });
+      civitaiWords.querySelector("textarea")?.setAttribute("readonly", "readonly");
       const positives = field("Positive patterns JSON", JSON.stringify(entry.example_positive_patterns || [], null, 2), () => {}, { multiline: true });
       const negatives = field("Negative patterns JSON", JSON.stringify(entry.example_negative_patterns || [], null, 2), () => {}, { multiline: true });
       const notes = field("Notes", entry.notes || "", () => {}, { multiline: true });
-      editor.append(editorSelect, civitai, baseModel, recommendedWeight, triggerMap, positives, negatives, notes);
+      editor.append(editorSelect, civitai, baseModel, recommendedWeight, triggerMap, civitaiWords, positives, negatives, notes);
       knowledgeCard.append(editor);
       const editorActions = document.createElement("div");
       editorActions.className = "vrgdg-film-actions";
@@ -518,7 +522,7 @@ export function openScriptToFilmPlanner(config) {
       };
       editorActions.append(saveEntry, research);
       knowledgeCard.append(editorActions);
-      if (!String(entry.civitai_model_id || "").trim()) void autoDetectCivitaiForSelection(entry.lora_name);
+      void autoDetectCivitaiForSelection(entry.lora_name);
     }
     body.append(knowledgeCard);
 

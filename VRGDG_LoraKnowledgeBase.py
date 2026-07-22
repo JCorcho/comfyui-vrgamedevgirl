@@ -111,6 +111,21 @@ def _normalize_patterns(value):
     return [_safe_text(item, 2000) for item in value if _safe_text(item, 2000)][:80]
 
 
+def _normalize_civitai_trigger_words(value):
+    """Flatten Civitai's mixed list/comma-separated trainedWords field."""
+    raw_values = [value] if isinstance(value, str) else (value if isinstance(value, list) else [])
+    result = []
+    seen = set()
+    for raw in raw_values:
+        for token in str(raw or "").replace("\n", ",").split(","):
+            clean = _safe_text(token, 500).strip(" ,;")
+            key = clean.lower()
+            if clean and key not in seen:
+                seen.add(key)
+                result.append(clean)
+    return result[:120]
+
+
 def _finite_number(value, default=1.0):
     try:
         number = float(value)
@@ -127,6 +142,8 @@ def _normalize_entry(name, value=None):
     return {
         "lora_name": lora_name,
         "civitai_model_id": _safe_text(source.get("civitai_model_id", ""), 120),
+        "civitai_model_version_id": _safe_text(source.get("civitai_model_version_id", ""), 120),
+        "civitai_trigger_words": _normalize_civitai_trigger_words(source.get("civitai_trigger_words", [])),
         "base_model_recommendation": _safe_text(source.get("base_model_recommendation", "unknown"), 300).lower() or "unknown",
         "trigger_map": _normalize_trigger_map(source.get("trigger_map", {})),
         "recommended_weight": max(-5.0, min(5.0, _finite_number(source.get("recommended_weight", 1.0), 1.0))),
@@ -344,6 +361,50 @@ def _civitai_model_id_from_version(payload):
     return _numeric_civitai_id(model.get("id", "")) if isinstance(model, dict) else ""
 
 
+def _civitai_model_version_id(payload):
+    source = payload if isinstance(payload, dict) else {}
+    return _numeric_civitai_id(source.get("id", source.get("modelVersionId", "")))
+
+
+def _select_civitai_model_version(versions, entry):
+    candidates = [item for item in versions if isinstance(item, dict)] if isinstance(versions, list) else []
+    wanted_id = _numeric_civitai_id(entry.get("civitai_model_version_id", "")) if isinstance(entry, dict) else ""
+    if wanted_id:
+        for version in candidates:
+            if _civitai_model_version_id(version) == wanted_id:
+                return version
+    recommendation = _safe_text(entry.get("base_model_recommendation", ""), 300).lower() if isinstance(entry, dict) else ""
+    if recommendation:
+        for version in candidates:
+            base_model = _safe_text(version.get("baseModel", ""), 300).lower()
+            if recommendation in base_model or base_model in recommendation:
+                return version
+    return candidates[0] if candidates else {}
+
+
+def _merge_civitai_trigger_words(entry, words):
+    """Make verified Civitai trigger words visible and usable without losing context keys.
+
+    Civitai's `trainedWords` are normally all required identity tokens, so they
+    occupy the always-applied `base` slot as one prompt fragment. Header-derived
+    action/camera keys remain in place. If an owner already authored a non-auto
+    base value, retain it and add a second always-applied `civitai_base` instead.
+    """
+    clean_words = _normalize_civitai_trigger_words(words)
+    trigger_map = _normalize_trigger_map(entry.get("trigger_map", {}) if isinstance(entry, dict) else {})
+    if not clean_words:
+        return trigger_map
+    joined = ", ".join(clean_words)
+    notes = _safe_text(entry.get("notes", ""), 8000) if isinstance(entry, dict) else ""
+    header_derived = notes.startswith("Auto-imported from the installed LoRA file.")
+    if header_derived or not trigger_map.get("base"):
+        trigger_map["base"] = joined
+        trigger_map.pop("civitai_base", None)
+    elif trigger_map.get("base", "").strip().lower() != joined.lower():
+        trigger_map["civitai_base"] = joined
+    return trigger_map
+
+
 def _civitai_search_queries(lora_name):
     stem = os.path.splitext(os.path.basename(_safe_text(lora_name, 1024)))[0]
     spaced = re.sub(r"[_\-.]+", " ", stem)
@@ -528,8 +589,11 @@ def _installed_lora_path(lora_name):
     return ""
 
 
-def _save_detected_civitai_id(store, entry, model_id, method, path=None):
+def _save_detected_civitai_id(store, entry, model_id, method, path=None, model_version_id=""):
     entry["civitai_model_id"] = _numeric_civitai_id(model_id)
+    version_id = _numeric_civitai_id(model_version_id)
+    if version_id:
+        entry["civitai_model_version_id"] = version_id
     source_metadata = entry.get("source_metadata", {}) if isinstance(entry.get("source_metadata"), dict) else {}
     source_metadata["civitai_detection"] = {
         "method": _safe_text(method, 1000),
@@ -609,7 +673,7 @@ def auto_detect_civitai(lora_name, path=None, force=False):
             continue
         if model_id:
             return {
-                "entry": _save_detected_civitai_id(store, entry, model_id, "exact_file_hash", path),
+                "entry": _save_detected_civitai_id(store, entry, model_id, "exact_file_hash", path, _civitai_model_version_id(version)),
                 "found": True,
                 "match_method": "exact_file_hash",
                 "message": "Civitai model ID was filled from the exact downloaded-file hash.",
@@ -648,15 +712,17 @@ def research_civitai(lora_name, path=None):
     except Exception as exc:
         raise ValueError(f"Civitai metadata lookup failed: {type(exc).__name__}: {exc}")
     versions = remote.get("modelVersions", []) if isinstance(remote, dict) else []
-    version = versions[0] if isinstance(versions, list) and versions and isinstance(versions[0], dict) else {}
+    version = _select_civitai_model_version(versions, entry)
+    version_id = _civitai_model_version_id(version)
+    if version_id:
+        entry["civitai_model_version_id"] = version_id
     base_model = _safe_text(version.get("baseModel", remote.get("baseModel", "")), 300).lower()
     if base_model:
         entry["base_model_recommendation"] = base_model
-    words = version.get("trainedWords", []) if isinstance(version, dict) else []
-    if isinstance(words, str):
-        words = [item.strip() for item in words.split(",") if item.strip()]
-    if not entry.get("trigger_map") and isinstance(words, list) and words:
-        entry["trigger_map"] = {"base": ", ".join(_safe_text(word, 300) for word in words[:8] if _safe_text(word, 300))}
+    words = _normalize_civitai_trigger_words(version.get("trainedWords", []) if isinstance(version, dict) else [])
+    if words:
+        entry["civitai_trigger_words"] = words
+        entry["trigger_map"] = _merge_civitai_trigger_words(entry, words)
     title = _safe_text(remote.get("name", ""), 500)
     if title and title.lower() not in str(entry.get("notes", "")).lower():
         entry["notes"] = _safe_text(f"{entry.get('notes', '').strip()}\nCivitai research: {title}".strip(), 8000)
@@ -706,7 +772,7 @@ def _manual_trigger_keys(scene, lora_name):
 
 
 def _key_matches_scene(key, scene_text, manual_keys):
-    if key == "base" or key in manual_keys:
+    if key in {"base", "civitai_base"} or key in manual_keys:
         return True
     words = [word for word in key.split("_") if word and word not in {"action", "outfit", "style", "camera", "pose", "state", "scene", "environment", "lighting"}]
     if not words:
@@ -778,6 +844,7 @@ def all_trigger_terms(entries):
         if not isinstance(entry, dict):
             continue
         terms.extend(entry.get("trigger_map", {}).values() if isinstance(entry.get("trigger_map"), dict) else [])
+        terms.extend(entry.get("civitai_trigger_words", []) if isinstance(entry.get("civitai_trigger_words"), list) else [])
         name = _safe_text(entry.get("lora_name", ""), 1024)
         if name:
             terms.extend([name, os.path.splitext(os.path.basename(name))[0]])

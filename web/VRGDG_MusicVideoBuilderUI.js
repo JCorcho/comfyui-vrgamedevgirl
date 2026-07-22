@@ -11,7 +11,7 @@ import {
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
 import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260722-ltx-memory";
-import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-civitai-autofill";
+import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-civitai-triggers";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";

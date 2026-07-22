@@ -50,7 +50,7 @@ For compatibility with shared Builder scene controls, normalization also retains
 
 ### LoRA Knowledge and Character Bible boundary
 
-The Film-only Knowledge Base is intentionally not an arbitrary graph-LoRA loader. It stores technical generation metadata for an installed LoRA: model-family recommendation, a structured `trigger_map`, recommended weight, examples, notes, and an optional Civitai model ID. The runtime store is `data/lora_knowledge_base.json`, is atomic-write local user data, and is ignored by Git.
+The Film-only Knowledge Base is intentionally not an arbitrary graph-LoRA loader. It stores technical generation metadata for an installed LoRA: model-family recommendation, a structured `trigger_map`, recommended weight, examples, notes, and optional Civitai model/version IDs. Verified Civitai `trainedWords` are stored as `civitai_trigger_words` and merged into the always-applied base prompt fragment while preserving structured action/camera keys. The runtime store is `data/lora_knowledge_base.json`, is atomic-write local user data, and is ignored by Git.
 
 `character_bible` must contain only identity/continuity data. It must never receive a LoRA filename, trigger text, model family, Civitai ID, or recommended weight. The resolver sanitizes it before returning a Film scene. A scene inherits `script_to_film.lora_knowledge_loras` unless it supplies `lora_knowledge_refs`; its prompts receive only compatible, context-matching triggers for that shot. An optional Style Profile JSON may be linked at `style_profile_path` and is resolved alongside metadata without altering the Bible. See [LORA_KNOWLEDGE_BASE.md](LORA_KNOWLEDGE_BASE.md) for the exact contract and [the user guide](../USER_GUIDES/SCRIPT_TO_FILM_LORA_KNOWLEDGE.md) for operation.
 

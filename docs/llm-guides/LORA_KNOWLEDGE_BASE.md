@@ -38,9 +38,11 @@ Each entry is keyed by the installed LoRA filename and has this minimum contract
 {
   "lora_name": "ExampleCharacterPony.safetensors",
   "civitai_model_id": "",
+  "civitai_model_version_id": "",
+  "civitai_trigger_words": ["examplecharacter", "red skin", "orange eyes"],
   "base_model_recommendation": "pony",
   "trigger_map": {
-    "base": "examplecharacter",
+    "base": "examplecharacter, red skin, orange eyes",
     "outfit_casual": "example casual jacket",
     "action_kneeling": "example kneeling pose",
     "style_anime": "example anime linework"
@@ -56,6 +58,8 @@ Each entry is keyed by the installed LoRA filename and has this minimum contract
 `Import / Refresh LoRA Metadata` scans the currently visible ComfyUI LoRA list and reads only `.safetensors` headers. It can infer base family and proposes a non-destructive trigger map from embedded training tags when present. It never downloads a model or overwrites an existing non-empty trigger map. If a header already contains a Civitai model ID, it is captured immediately.
 
 Selecting a LoRA automatically attempts to fill its Civitai model ID. The resolver tries embedded metadata first, then Civitai's exact-file-hash endpoint (calculating a local SHA-256 only for the selected file), then a deliberately conservative filename search. A temporary Civitai outage or an ambiguous name leaves the ID blank with a non-error status; it never invents an unverified association. **Auto-detect / Refresh Civitai Metadata** retries this process and enriches the record when a verified ID is found.
+
+On successful research, the selected Civitai **model version** is retained when known; otherwise its base-model family selects the closest version. Its `trainedWords` are flattened into `civitai_trigger_words` and also merged into the always-applied `trigger_map.base` fragment for header-derived records. Therefore every verified Civitai trigger word is visible in the Planner and sent to the relevant shot prompt. Existing action/camera/outfit keys are preserved.
 
 ## Resolution contract
 

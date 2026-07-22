@@ -88,6 +88,46 @@ class LoraKnowledgeBaseTests(unittest.TestCase):
         stored = kb.load_store(self.store_path)["entries"]["TestCharacterPony.safetensors"]
         self.assertEqual("123456", stored["civitai_model_id"])
 
+    def test_civitai_trigger_words_merge_into_the_selected_version_map(self):
+        store = kb.load_store(self.store_path)
+        entry = store["entries"]["TestCharacterPony.safetensors"]
+        entry["notes"] = "Auto-imported from the installed LoRA file."
+        entry["civitai_model_id"] = "900"
+        entry["civitai_model_version_id"] = "222"
+        kb.save_store(store, self.store_path)
+        remote_model = {
+            "name": "Test Character",
+            "modelVersions": [
+                {"id": 111, "name": "Wrong version", "baseModel": "SDXL", "trainedWords": ["wrongtoken"]},
+                {
+                    "id": 222,
+                    "name": "Exact Pony version",
+                    "baseModel": "Pony",
+                    "trainedWords": ["testponyhero,", "red skin, orange eyes, facial mark, tattoo, twi'lek,"],
+                },
+            ],
+        }
+        with patch.object(kb, "_civitai_request", return_value=remote_model):
+            result = kb.research_civitai("TestCharacterPony.safetensors", self.store_path)
+        self.assertTrue(result["researched"])
+        self.assertEqual("222", result["entry"]["civitai_model_version_id"])
+        self.assertEqual(
+            ["testponyhero", "red skin", "orange eyes", "facial mark", "tattoo", "twi'lek"],
+            result["entry"]["civitai_trigger_words"],
+        )
+        self.assertEqual(
+            "testponyhero, red skin, orange eyes, facial mark, tattoo, twi'lek",
+            result["entry"]["trigger_map"]["base"],
+        )
+        self.assertIn("action_kneeling", result["entry"]["trigger_map"])
+        resolved = kb.resolve_scene_triggers(
+            {"physical_state_progression": "The adult performer is kneeling."},
+            ["TestCharacterPony.safetensors"],
+            "pony",
+            self.store_path,
+        )
+        self.assertIn("orange eyes", kb.resolution_fragment(resolved))
+
 
 if __name__ == "__main__":
     unittest.main()
