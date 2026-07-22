@@ -254,12 +254,17 @@ def _create_prompt_creator_output(payload):
     if not script:
         raise ValueError("Paste a script before creating a Script-to-Film plan.")
     system_prompt, system_path = _read_system_prompt()
+    runner_payload = dict(payload or {})
+    # The Film contract is a complete JSON object with an array of scene
+    # records, not a one-paragraph prompt. This opt-in leaves Music Video's
+    # historical output cleanup untouched.
+    runner_payload["preserve_structured_output"] = True
     result = _run_text_gemma_custom(
-        payload.get("model_file", payload.get("text_gemma_model", "")),
+        runner_payload.get("model_file", runner_payload.get("text_gemma_model", "")),
         system_prompt,
         script,
-        payload.get("llm_settings"),
-        payload,
+        runner_payload.get("llm_settings"),
+        runner_payload,
     )
     parsed = _extract_json_object(result.get("text", ""))
     source_scenes = parsed.get("scenes", parsed.get("film_scenes", [])) if isinstance(parsed, dict) else []
@@ -545,6 +550,10 @@ def _ensure_routes():
             result = await asyncio.to_thread(_create_prompt_creator_output, payload)
             return web.json_response({"ok": True, **result})
         except Exception as exc:
+            # Browser callers receive this same message, but recording it in
+            # Comfy's logs makes future LLM/JSON failures diagnosable after the
+            # modal has been closed. Do not log raw scripts or model output.
+            print(f"[VRGDG Script-to-Film] Prompt Creator failed: {type(exc).__name__}: {exc}")
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
     @server.routes.post("/vrgdg/script_to_film/save_plan")

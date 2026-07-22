@@ -1023,6 +1023,10 @@ def _run_text_gemma_custom(model_file, custom_instructions, user_input, override
         temperature=float(settings["temperature"]),
         top_p=float(settings["top_p"]),
         max_new_tokens=int(settings["max_new_tokens"]),
+        # Script-to-Film asks for a full JSON scene array. Preserve all
+        # paragraphs only when that dedicated route opts in; existing prompt
+        # creator uses retain their historical single-paragraph cleanup.
+        preserve_structured_output=bool(runner_payload.get("preserve_structured_output", False)),
     )
     if str(status or "").strip().lower() != "ok":
         raise ValueError(str(status or "Gemma failed to run."))

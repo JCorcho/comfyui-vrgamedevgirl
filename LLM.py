@@ -2480,7 +2480,13 @@ class VRGDG_Qwen35:
                     max_new_tokens,
                 )
             text = str(text or "").strip()
-            text = self._enforce_preset_output(task_preset, text)
+            # Structured callers (such as Script-to-Film) need the complete
+            # multi-line JSON document. The legacy prompt presets deliberately
+            # keep only the first paragraph, which corrupts valid JSON when a
+            # model inserts blank lines between scene records. Default to the
+            # legacy behavior so existing Music Video prompt paths are unchanged.
+            if not bool(kwargs.get("preserve_structured_output", False)):
+                text = self._enforce_preset_output(task_preset, text)
             if not text:
                 raise Exception("Empty model response.")
             return (text, model_id, "ok")
@@ -3638,7 +3644,10 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
                     max_new_tokens,
                 )
             text = str(text or "").strip()
-            text = self._enforce_preset_output(task_preset, text)
+            # Keep complete JSON scene arrays for callers that explicitly opt
+            # in. Legacy prompt creation stays single-paragraph by default.
+            if not bool(kwargs.get("preserve_structured_output", False)):
+                text = self._enforce_preset_output(task_preset, text)
             if not text:
                 raise Exception("Empty model response.")
             used_model = model_path
