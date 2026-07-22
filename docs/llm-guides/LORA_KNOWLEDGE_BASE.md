@@ -53,7 +53,9 @@ Each entry is keyed by the installed LoRA filename and has this minimum contract
 }
 ```
 
-`Import / Refresh LoRA Metadata` scans the currently visible ComfyUI LoRA list and reads only `.safetensors` headers. It can infer base family and proposes a non-destructive trigger map from embedded training tags when present. It never downloads a model, overwrites an existing non-empty trigger map, or invents a Civitai ID. The optional Civitai action uses only the explicitly saved numeric model ID.
+`Import / Refresh LoRA Metadata` scans the currently visible ComfyUI LoRA list and reads only `.safetensors` headers. It can infer base family and proposes a non-destructive trigger map from embedded training tags when present. It never downloads a model or overwrites an existing non-empty trigger map. If a header already contains a Civitai model ID, it is captured immediately.
+
+Selecting a LoRA automatically attempts to fill its Civitai model ID. The resolver tries embedded metadata first, then Civitai's exact-file-hash endpoint (calculating a local SHA-256 only for the selected file), then a deliberately conservative filename search. A temporary Civitai outage or an ambiguous name leaves the ID blank with a non-error status; it never invents an unverified association. **Auto-detect / Refresh Civitai Metadata** retries this process and enriches the record when a verified ID is found.
 
 ## Resolution contract
 
@@ -74,7 +76,7 @@ Each entry is keyed by the installed LoRA filename and has this minimum contract
 | `GET /vrgdg/script_to_film/lora_knowledge` | Read stored metadata and installed-LoRA availability without writing. |
 | `POST /vrgdg/script_to_film/lora_knowledge/refresh` | Scan installed LoRA headers and merge basic metadata into the local store. |
 | `POST /vrgdg/script_to_film/lora_knowledge/upsert` | Validate and save an edited metadata record. |
-| `POST /vrgdg/script_to_film/lora_knowledge/research_civitai` | Refresh a record from its explicit numeric Civitai model ID. |
+| `POST /vrgdg/script_to_film/lora_knowledge/research_civitai` | Auto-detect a Civitai model ID for the selected record, then refresh its public metadata when a verified match is available. |
 | `POST /vrgdg/script_to_film/resolve_lora_prompts` | Normalize one Film scene, sanitize its Character Bible, and return target-specific trigger results. |
 
 All routes are registered in `VRGDG_ScriptToFilmNodes.py`; no Music Video API route is changed.

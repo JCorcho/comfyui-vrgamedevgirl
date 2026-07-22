@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -75,6 +76,17 @@ class LoraKnowledgeBaseTests(unittest.TestCase):
         bible = kb.sanitize_character_bible(kneeling_scene["character_bible"], names, self.store_path)
         self.assertNotIn("testponyhero", bible["summary"].lower())
         self.assertNotIn("test casual jacket", bible["summary"].lower())
+
+    def test_embedded_civitai_model_id_is_autofilled_without_user_input(self):
+        with patch.object(kb, "_installed_lora_path", return_value="C:/models/TestCharacterPony.safetensors"), patch.object(
+            kb, "_read_safetensors_metadata", return_value={"civitai_model_id": "123456"}
+        ):
+            result = kb.auto_detect_civitai("TestCharacterPony.safetensors", self.store_path)
+        self.assertTrue(result["found"])
+        self.assertEqual("embedded_metadata", result["match_method"])
+        self.assertEqual("123456", result["entry"]["civitai_model_id"])
+        stored = kb.load_store(self.store_path)["entries"]["TestCharacterPony.safetensors"]
+        self.assertEqual("123456", stored["civitai_model_id"])
 
 
 if __name__ == "__main__":

@@ -8,11 +8,13 @@ prompt examples.  It has no Music Video routes or workflow patches.
 
 import copy
 import datetime as _datetime
+import hashlib
 import json
 import os
 import re
 import struct
 import tempfile
+import urllib.parse
 import urllib.request
 
 import folder_paths
@@ -24,6 +26,8 @@ _STORE_PATH = os.path.join(_DATA_DIR, "lora_knowledge_base.json")
 _MAX_SAFETENSORS_HEADER_BYTES = 16 * 1024 * 1024
 _MAX_STYLE_PROFILE_BYTES = 1024 * 1024
 _STORE_VERSION = 1
+_CIVITAI_API_ROOT = "https://civitai.com/api/v1"
+_CIVITAI_USER_AGENT = "ComfyUI-VRGDG-LoRA-Knowledge/1.1"
 _TRIGGER_GENERIC_WORDS = {
     "1girl", "1boy", "girl", "boy", "woman", "man", "solo", "outdoors",
     "indoors", "portrait", "close-up", "full body", "looking at viewer",
@@ -281,6 +285,130 @@ def _metadata_summary(metadata, path):
     }
 
 
+def _numeric_civitai_id(value):
+    candidate = _safe_text(value, 120)
+    return candidate if candidate.isdigit() else ""
+
+
+def _civitai_model_id_from_metadata(metadata):
+    """Return a model ID embedded by a downloader/trainer, when present.
+
+    Civitai metadata conventions are not consistent across downloader versions,
+    so this intentionally checks both conventional field names and Civitai model
+    URLs. It never mistakes a *model-version* ID for a model ID.
+    """
+    source = metadata if isinstance(metadata, dict) else {}
+    for raw_key, raw_value in source.items():
+        key = _safe_text(raw_key, 300).lower().replace("-", "_").replace(".", "_")
+        value = _safe_text(raw_value, 2000)
+        if not value:
+            continue
+        is_model_id_key = "civitai" in key and "model" in key and "id" in key and "version" not in key
+        if is_model_id_key:
+            found = _numeric_civitai_id(value)
+            if found:
+                return found
+        if "civitai" in key or "civitai.com" in value.lower():
+            match = re.search(r"civitai\.com/(?:models|models/[^/]+)/(\d+)", value, flags=re.IGNORECASE)
+            if match:
+                return match.group(1)
+    return ""
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(4 * 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _civitai_request(path):
+    request = urllib.request.Request(
+        f"{_CIVITAI_API_ROOT}{path}",
+        headers={"User-Agent": _CIVITAI_USER_AGENT, "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _civitai_model_id_from_version(payload):
+    source = payload if isinstance(payload, dict) else {}
+    direct = _numeric_civitai_id(source.get("modelId", source.get("model_id", "")))
+    if direct:
+        return direct
+    model = source.get("model", {})
+    return _numeric_civitai_id(model.get("id", "")) if isinstance(model, dict) else ""
+
+
+def _civitai_search_queries(lora_name):
+    stem = os.path.splitext(os.path.basename(_safe_text(lora_name, 1024)))[0]
+    spaced = re.sub(r"[_\-.]+", " ", stem)
+    simplified = re.sub(r"\b(?:lora|pony|ponyxl|sdxl|ltx|ltx2|ltx23|v?\d+(?:\.\d+)?|rank\d+|step\d+)\b", " ", spaced, flags=re.IGNORECASE)
+    values = [spaced, simplified]
+    result = []
+    seen = set()
+    for value in values:
+        clean = re.sub(r"\s+", " ", value).strip()
+        key = clean.lower()
+        if clean and key not in seen:
+            seen.add(key)
+            result.append(clean[:300])
+    return result
+
+
+def _search_tokens(value):
+    ignored = {"lora", "pony", "ponyxl", "sdxl", "ltx", "ltx2", "ltx23", "safetensors", "model", "v"}
+    return {item for item in re.findall(r"[a-z0-9]{2,}", _safe_text(value, 2000).lower()) if item not in ignored and not item.isdigit()}
+
+
+def _best_civitai_search_match(lora_name):
+    """Use a conservative name search only after exact metadata/hash lookup.
+
+    A filename is not an authoritative identity, so an ambiguous weak match is
+    deliberately left blank rather than silently attaching the wrong model.
+    """
+    requested_tokens = _search_tokens(lora_name)
+    if not requested_tokens:
+        return "", "", []
+    candidates = []
+    failures = []
+    for query in _civitai_search_queries(lora_name):
+        try:
+            payload = _civitai_request("/models?types=LORA&limit=100&query=" + urllib.parse.quote(query, safe=""))
+        except Exception as exc:
+            failures.append(f"{type(exc).__name__}: {exc}")
+            continue
+        for item in payload.get("items", []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            model_id = _numeric_civitai_id(item.get("id", ""))
+            if not model_id:
+                continue
+            texts = [_safe_text(item.get("name", ""), 1000)]
+            for version in item.get("modelVersions", []) if isinstance(item.get("modelVersions"), list) else []:
+                if isinstance(version, dict):
+                    texts.append(_safe_text(version.get("name", ""), 1000))
+            candidate_tokens = set().union(*(_search_tokens(text) for text in texts)) if texts else set()
+            overlap = requested_tokens & candidate_tokens
+            if not overlap:
+                continue
+            # Require most of the distinctive filename tokens. This permits a
+            # normal version suffix difference but rejects a generic "Elsa" or
+            # "character" result that would poison the Knowledge Base.
+            coverage = len(overlap) / max(1, len(requested_tokens))
+            precision = len(overlap) / max(1, len(candidate_tokens))
+            score = (coverage * 0.8) + (precision * 0.2)
+            candidates.append((score, model_id, _safe_text(item.get("name", ""), 500)))
+    if not candidates:
+        return "", "", failures
+    score, model_id, model_name = max(candidates, key=lambda item: (item[0], len(item[2])))
+    return (model_id, f"filename_search:{score:.2f}:{model_name}", failures) if score >= 0.72 else ("", "", failures)
+
+
 def _installed_lora_paths():
     result = {}
     try:
@@ -331,9 +459,11 @@ def refresh_knowledge(path=None):
         metadata = _read_safetensors_metadata(full_path)
         auto_map = _auto_trigger_map(metadata)
         auto_summary = _metadata_summary(metadata, full_path)
+        embedded_civitai_id = _civitai_model_id_from_metadata(metadata)
         if existing is None:
             entry = _normalize_entry(name, {
                 "lora_name": name,
+                "civitai_model_id": embedded_civitai_id,
                 "base_model_recommendation": _infer_base_model(name, metadata),
                 "trigger_map": auto_map,
                 "recommended_weight": 1.0,
@@ -353,6 +483,9 @@ def refresh_knowledge(path=None):
                 changed = True
         if not existing.get("trigger_map") and auto_map:
             existing["trigger_map"] = auto_map
+            changed = True
+        if not _numeric_civitai_id(existing.get("civitai_model_id", "")) and embedded_civitai_id:
+            existing["civitai_model_id"] = embedded_civitai_id
             changed = True
         if existing.get("source_metadata") != auto_summary:
             existing["source_metadata"] = auto_summary
@@ -381,22 +514,137 @@ def upsert_entry(payload, path=None):
     return {"entry": copy.deepcopy(entry), **list_knowledge(path)}
 
 
-def research_civitai(lora_name, path=None):
+def _public_entry(entry):
+    result = copy.deepcopy(entry if isinstance(entry, dict) else {})
+    result.pop("source_metadata", None)
+    return result
+
+
+def _installed_lora_path(lora_name):
+    requested = _safe_text(lora_name, 1024).lower()
+    for name, full_path in _installed_lora_paths().items():
+        if name.lower() == requested:
+            return full_path
+    return ""
+
+
+def _save_detected_civitai_id(store, entry, model_id, method, path=None):
+    entry["civitai_model_id"] = _numeric_civitai_id(model_id)
+    source_metadata = entry.get("source_metadata", {}) if isinstance(entry.get("source_metadata"), dict) else {}
+    source_metadata["civitai_detection"] = {
+        "method": _safe_text(method, 1000),
+        "detected_at": _utc_now(),
+    }
+    entry["source_metadata"] = source_metadata
+    entry["last_updated"] = _utc_now()
+    clean = _normalize_entry(entry["lora_name"], entry)
+    store["entries"][clean["lora_name"]] = clean
+    save_store(store, path)
+    return _public_entry(clean)
+
+
+def auto_detect_civitai(lora_name, path=None, force=False):
+    """Find and save a Civitai *model* ID for one selected installed LoRA.
+
+    Selection is intentionally on-demand: importing a large local collection
+    stays fast and offline, while choosing one record uses the strongest
+    available identity in order—embedded model ID, an exact model-file hash,
+    then a conservative filename match. A no-match/temporary Civitai outage is
+    a normal result, not a UI error or a fabricated ID.
+    """
     store = load_store(path)
     name = _safe_text(lora_name, 1024)
     entry = store["entries"].get(name)
     if not entry:
-        raise ValueError("Import this LoRA into the Knowledge Base before researching it.")
+        raise ValueError("Import this LoRA into the Knowledge Base before detecting Civitai metadata.")
+    existing_id = _numeric_civitai_id(entry.get("civitai_model_id", ""))
+    if existing_id and not force:
+        return {
+            "entry": _public_entry(entry),
+            "found": True,
+            "match_method": "existing",
+            "message": "Civitai model ID is already stored for this LoRA.",
+        }
+
+    full_path = _installed_lora_path(name)
+    metadata = _read_safetensors_metadata(full_path) if full_path else {}
+    embedded_id = _civitai_model_id_from_metadata(metadata)
+    if embedded_id:
+        return {
+            "entry": _save_detected_civitai_id(store, entry, embedded_id, "embedded_metadata", path),
+            "found": True,
+            "match_method": "embedded_metadata",
+            "message": "Civitai model ID was filled from this LoRA's embedded metadata.",
+        }
+
+    failures = []
+    source_metadata = entry.get("source_metadata", {}) if isinstance(entry.get("source_metadata"), dict) else {}
+    hashes = []
+    for key in ("civitai_full_sha256", "sha256", "sshs_model_hash", "model_hash"):
+        value = _safe_text(source_metadata.get(key, metadata.get(key, "")), 200).lower()
+        if re.fullmatch(r"[a-f0-9]{64}", value) and value not in hashes:
+            hashes.append(value)
+    if full_path and os.path.isfile(full_path):
+        try:
+            summary = _metadata_summary(metadata, full_path)
+            cached_hash = _safe_text(source_metadata.get("civitai_full_sha256", ""), 200).lower()
+            if cached_hash and source_metadata.get("file_size_bytes") == summary["file_size_bytes"] and source_metadata.get("modified_at") == summary["modified_at"]:
+                full_hash = cached_hash
+            else:
+                full_hash = _sha256_file(full_path)
+                source_metadata.update(summary)
+                source_metadata["civitai_full_sha256"] = full_hash
+                entry["source_metadata"] = source_metadata
+            if full_hash not in hashes:
+                hashes.append(full_hash)
+        except Exception as exc:
+            failures.append(f"local hash: {type(exc).__name__}")
+
+    for file_hash in hashes:
+        try:
+            version = _civitai_request("/model-versions/by-hash/" + urllib.parse.quote(file_hash, safe=""))
+            model_id = _civitai_model_id_from_version(version)
+        except Exception as exc:
+            failures.append(f"hash lookup: {type(exc).__name__}")
+            continue
+        if model_id:
+            return {
+                "entry": _save_detected_civitai_id(store, entry, model_id, "exact_file_hash", path),
+                "found": True,
+                "match_method": "exact_file_hash",
+                "message": "Civitai model ID was filled from the exact downloaded-file hash.",
+            }
+
+    model_id, search_method, search_failures = _best_civitai_search_match(name)
+    failures.extend(search_failures)
+    if model_id:
+        return {
+            "entry": _save_detected_civitai_id(store, entry, model_id, search_method, path),
+            "found": True,
+            "match_method": search_method,
+            "message": "Civitai model ID was filled from a high-confidence filename match.",
+        }
+    return {
+        "entry": _public_entry(entry),
+        "found": False,
+        "match_method": "none",
+        "message": "No verified Civitai match was available for this LoRA yet. The record remains usable with its local metadata.",
+        "lookup_notes": failures[:4],
+    }
+
+
+def research_civitai(lora_name, path=None):
+    name = _safe_text(lora_name, 1024)
+    detected = auto_detect_civitai(name, path)
+    if not detected.get("found"):
+        return {**detected, "researched": False, "civitai_name": ""}
+    store = load_store(path)
+    entry = store["entries"].get(name)
+    if not entry:
+        raise ValueError("LoRA metadata record disappeared while looking up Civitai.")
     model_id = _safe_text(entry.get("civitai_model_id", ""), 120)
-    if not model_id.isdigit():
-        raise ValueError("Enter a numeric Civitai model ID for this LoRA before researching it.")
-    request = urllib.request.Request(
-        f"https://civitai.com/api/v1/models/{model_id}",
-        headers={"User-Agent": "ComfyUI-VRGDG-LoRA-Knowledge/1.0"},
-    )
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            remote = json.loads(response.read().decode("utf-8"))
+        remote = _civitai_request("/models/" + urllib.parse.quote(model_id, safe=""))
     except Exception as exc:
         raise ValueError(f"Civitai metadata lookup failed: {type(exc).__name__}: {exc}")
     versions = remote.get("modelVersions", []) if isinstance(remote, dict) else []
@@ -415,7 +663,13 @@ def research_civitai(lora_name, path=None):
     entry["last_updated"] = _utc_now()
     store["entries"][name] = _normalize_entry(name, entry)
     save_store(store, path)
-    return {"entry": copy.deepcopy(store["entries"][name]), "civitai_name": title}
+    return {
+        "entry": _public_entry(store["entries"][name]),
+        "civitai_name": title,
+        "found": True,
+        "researched": True,
+        "match_method": detected.get("match_method", "existing"),
+    }
 
 
 def _target_compatible(entry, target):

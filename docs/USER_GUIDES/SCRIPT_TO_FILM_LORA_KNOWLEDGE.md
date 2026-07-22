@@ -5,7 +5,7 @@ Use this feature when a character or style LoRA has special trigger words, prefe
 1. Open **Film Planner** from either the Builder or Wizard.
 2. In **LoRA Knowledge Base**, click **Import / Refresh LoRA Metadata**. This scans LoRAs already installed in ComfyUI; it does not download anything.
 3. Select one or more entries in **Active LoRA knowledge for this Film project**. Choose records that match the model family: Pony/SDXL records guide Pony keyframes, and LTX records guide LTX shots.
-4. Select an entry under **Edit LoRA metadata**. Add its Civitai model ID if you know it, then click **Research selected Civitai ID**. Otherwise enter its base model, trigger map, recommended weight, examples, and notes yourself, then click **Save LoRA Metadata**.
+4. Select an entry under **Edit LoRA metadata**. Its Civitai model ID is filled automatically where Civitai can verify the installed file (embedded metadata, exact file hash, then a high-confidence filename match). Use **Auto-detect / Refresh Civitai Metadata** to retry or refresh it—there is no need to memorize model IDs. You may still override an ID only when you have a specific reason.
 5. The trigger map is structured. Keep the always-needed character token in `base`, then add context-specific keys such as `action_kneeling`, `outfit_casual`, `action_running`, or `style_anime`.
 6. Optionally paste the path to a Character Style Profile JSON file in **Character Style Profile JSON**. Its visual style is used alongside the LoRA knowledge, but it does not alter the Character Bible.
 7. Create or edit Film scenes normally. Leave **Scene LoRA metadata refs** blank to inherit the project selection, or list specific LoRA filenames to narrow that one shot.

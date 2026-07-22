@@ -119,7 +119,7 @@ The builder starts from `Singlei2vForUI_API.json`, then makes these structural s
 | `GET /vrgdg/script_to_film/lora_knowledge` | Read the Film-only local LoRA metadata store and installed-LoRA availability. |
 | `POST /vrgdg/script_to_film/lora_knowledge/refresh` | Import/refresh basic metadata from already installed `.safetensors` headers; never downloads a model. |
 | `POST /vrgdg/script_to_film/lora_knowledge/upsert` | Validate and persist an edited LoRA metadata record. |
-| `POST /vrgdg/script_to_film/lora_knowledge/research_civitai` | Refresh an entry only from its explicitly saved numeric Civitai model ID. |
+| `POST /vrgdg/script_to_film/lora_knowledge/research_civitai` | Auto-detect the selected record's Civitai model ID from embedded metadata, exact file hash, or a high-confidence name match, then refresh its public metadata. |
 | `POST /vrgdg/script_to_film/resolve_lora_prompts` | Resolve per-shot model-compatible trigger fragments and sanitize its Character Bible. |
 | `POST /vrgdg/script_to_film/save_plan` | Persist `script_to_film/film_scene_plan.json` under the project folder. |
 | `POST /vrgdg/script_to_film/build_t2av_prompt` | Produce the isolated API graph with Violets LTX loader/LoRA enforcement. |

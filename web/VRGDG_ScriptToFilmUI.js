@@ -243,6 +243,8 @@ export function openScriptToFilmPlanner(config) {
   state.segments = Array.isArray(state.segments) ? state.segments : [];
   let loraKnowledge = { entries: [], installed_loras: [], last_refreshed: "", store_path: "" };
   let selectedKnowledgeLora = "";
+  const attemptedCivitaiDetection = new Set();
+  const activeCivitaiDetection = new Set();
   const backdrop = document.createElement("div");
   backdrop.className = "vrgdg-film-backdrop";
   const modal = document.createElement("section");
@@ -281,6 +283,36 @@ export function openScriptToFilmPlanner(config) {
     state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
     state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
     apply(`Timeline reflowed: ${Number(plan.total_duration_seconds || 0).toFixed(2)} seconds.`);
+  };
+  const autoDetectCivitaiForSelection = async (loraName, { force = false } = {}) => {
+    const name = String(loraName || "").trim();
+    if (!name) return null;
+    const key = name.toLowerCase();
+    const current = (loraKnowledge.entries || []).find((item) => String(item?.lora_name || "").toLowerCase() === key);
+    if (activeCivitaiDetection.has(key) || (!force && (attemptedCivitaiDetection.has(key) || String(current?.civitai_model_id || "").trim()))) return null;
+    activeCivitaiDetection.add(key);
+    attemptedCivitaiDetection.add(key);
+    try {
+      const researched = await requestJson("/vrgdg/script_to_film/lora_knowledge/research_civitai", "POST", { lora_name: name });
+      if (researched?.entry?.lora_name) {
+        loraKnowledge.entries = (loraKnowledge.entries || []).map((item) => item.lora_name === researched.entry.lora_name ? researched.entry : item);
+      }
+      if (researched?.found) {
+        const detail = researched.researched && researched.civitai_name ? `: ${researched.civitai_name}` : "";
+        status.textContent = `Civitai model ID auto-filled for ${name}${detail}.`;
+      } else {
+        status.textContent = `No verified Civitai match was available for ${name}; its local metadata remains usable.`;
+      }
+      if (document.body.contains(backdrop) && selectedKnowledgeLora === name) render();
+      return researched;
+    } catch (error) {
+      // A temporary Civitai outage must not make the selected local LoRA look
+      // invalid or block Film rendering. The user can retry the explicit button.
+      status.textContent = `Civitai auto-detection is temporarily unavailable for ${name}; local metadata remains usable.`;
+      return null;
+    } finally {
+      activeCivitaiDetection.delete(key);
+    }
   };
   const render = () => {
     body.replaceChildren();
@@ -367,7 +399,7 @@ export function openScriptToFilmPlanner(config) {
     knowledgeCard.className = "vrgdg-film-card";
     knowledgeCard.append(
       Object.assign(document.createElement("h3"), { textContent: "2. LoRA Knowledge Base (technical generation metadata)" }),
-      Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "This store owns trigger maps, compatibility, weights, and prompt examples. Character Bible stays identity-only; it never stores trigger words or LoRA technical details." }),
+      Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "This store owns trigger maps, compatibility, weights, and prompt examples. Character Bible stays identity-only; it never stores trigger words or LoRA technical details. Selecting a LoRA automatically looks up its Civitai model ID from embedded data, an exact file hash, or a high-confidence filename match." }),
     );
     const knowledgeActions = document.createElement("div");
     knowledgeActions.className = "vrgdg-film-actions";
@@ -417,6 +449,7 @@ export function openScriptToFilmPlanner(config) {
       activeSelect.onchange = () => {
         state.scriptToFilm.lora_knowledge_loras = Array.from(activeSelect.selectedOptions).map((option) => option.value);
         apply("Active Film LoRA knowledge updated. Matching triggers will resolve per shot at render time.");
+        for (const loraName of state.scriptToFilm.lora_knowledge_loras) void autoDetectCivitaiForSelection(loraName);
       };
       activeWrap.appendChild(activeSelect);
       knowledgeCard.append(activeWrap);
@@ -425,8 +458,12 @@ export function openScriptToFilmPlanner(config) {
       const entry = availableEntries.find((item) => item.lora_name === selectedKnowledgeLora) || availableEntries[0];
       const editor = document.createElement("div");
       editor.className = "vrgdg-film-grid";
-      const editorSelect = field("Edit LoRA metadata", selectedKnowledgeLora, (value) => { selectedKnowledgeLora = value; render(); }, { select: availableEntries.map((item) => ({ value: item.lora_name, label: item.lora_name })) });
-      const civitai = field("Civitai model ID (optional)", entry.civitai_model_id || "", () => {});
+      const editorSelect = field("Edit LoRA metadata", selectedKnowledgeLora, (value) => {
+        selectedKnowledgeLora = value;
+        render();
+        void autoDetectCivitaiForSelection(value);
+      }, { select: availableEntries.map((item) => ({ value: item.lora_name, label: item.lora_name })) });
+      const civitai = field("Civitai model ID (automatically detected; optional override)", entry.civitai_model_id || "", () => {});
       const baseModel = field("Base model recommendation", entry.base_model_recommendation || "unknown", () => {});
       const recommendedWeight = field("Recommended weight", entry.recommended_weight ?? 1, () => {}, { type: "number" });
       const triggerMap = field("Trigger map JSON", JSON.stringify(entry.trigger_map || {}, null, 2), () => {}, { multiline: true });
@@ -465,7 +502,7 @@ export function openScriptToFilmPlanner(config) {
           render();
         } catch (error) { status.textContent = `LoRA metadata save error: ${errorMessage(error)}`; }
       };
-      const research = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Research selected Civitai ID" });
+      const research = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Auto-detect / Refresh Civitai Metadata" });
       research.onclick = async () => {
         try {
           research.disabled = true;
@@ -473,15 +510,15 @@ export function openScriptToFilmPlanner(config) {
           if (stagedId !== String(entry.civitai_model_id || "")) {
             await saveCurrentEntry();
           }
-          const researched = await requestJson("/vrgdg/script_to_film/lora_knowledge/research_civitai", "POST", { lora_name: entry.lora_name });
-          loraKnowledge.entries = (loraKnowledge.entries || []).map((item) => item.lora_name === entry.lora_name ? researched.entry : item);
-          status.textContent = `Civitai metadata refreshed for ${entry.lora_name}${researched.civitai_name ? `: ${researched.civitai_name}` : ""}.`;
-          render();
-        } catch (error) { status.textContent = `Civitai research error: ${errorMessage(error)}`; }
+          const researched = await autoDetectCivitaiForSelection(entry.lora_name, { force: true });
+          if (researched?.found) return;
+          if (researched) status.textContent = `No verified Civitai match was available for ${entry.lora_name}; local metadata remains usable.`;
+        } catch (error) { status.textContent = `Civitai metadata lookup error: ${errorMessage(error)}`; }
         finally { research.disabled = false; }
       };
       editorActions.append(saveEntry, research);
       knowledgeCard.append(editorActions);
+      if (!String(entry.civitai_model_id || "").trim()) void autoDetectCivitaiForSelection(entry.lora_name);
     }
     body.append(knowledgeCard);
 
