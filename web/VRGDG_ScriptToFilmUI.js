@@ -61,21 +61,51 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function isTransientPlannerPollError(error) {
+  const message = errorMessage(error).toLowerCase();
+  return [
+    "502",
+    "503",
+    "504",
+    "bad gateway",
+    "gateway timeout",
+    "service unavailable",
+    "failed to fetch",
+    "networkerror",
+    "network error",
+    "load failed",
+  ].some((marker) => message.includes(marker));
+}
+
 async function requestPromptPlan(payload, onProgress = null) {
   const accepted = await requestJson("/vrgdg/script_to_film/create_prompt_plan", "POST", payload);
   if (Array.isArray(accepted.scenes)) return accepted;
   const jobId = String(accepted.job_id || "").trim();
   if (!jobId) throw new Error("Film Prompt Creator did not return a job ID.");
-  const deadline = Date.now() + (10 * 60 * 1000);
+  // Local GGUF prompt creators can legitimately take several minutes. A transient
+  // gateway response during polling must not cancel the server-side job.
+  const deadline = Date.now() + (20 * 60 * 1000);
   let elapsedSeconds = 0;
+  let transientPollFailures = 0;
   while (Date.now() < deadline) {
     await delay(1500);
     elapsedSeconds += 1.5;
-    const status = await requestJson(`/vrgdg/script_to_film/create_prompt_plan_status?job_id=${encodeURIComponent(jobId)}`);
+    let status;
+    try {
+      status = await requestJson(`/vrgdg/script_to_film/create_prompt_plan_status?job_id=${encodeURIComponent(jobId)}`);
+      transientPollFailures = 0;
+    } catch (error) {
+      if (!isTransientPlannerPollError(error) || Date.now() >= deadline) throw error;
+      transientPollFailures += 1;
+      const retryDelay = Math.min(5000, 750 * (2 ** Math.min(transientPollFailures - 1, 3)));
+      onProgress?.("temporarily disconnected; retrying", elapsedSeconds);
+      await delay(retryDelay);
+      continue;
+    }
     if (status.status === "complete" && Array.isArray(status.scenes)) return status;
     onProgress?.(status.status || "running", elapsedSeconds);
   }
-  throw new Error("Film Prompt Creator timed out after 10 minutes. The server job may still finish; check ComfyUI logs before retrying.");
+  throw new Error("Film Prompt Creator timed out after 20 minutes. The server job may still finish; check ComfyUI logs before retrying.");
 }
 
 function errorMessage(error) {
