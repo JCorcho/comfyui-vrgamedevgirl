@@ -5,7 +5,7 @@ This guide is the handoff document for the non-music **Script-to-Film** mode. It
 ## Contract
 
 - Persisted project switch: `project_mode: "music_video" | "script_to_film"`.
-- Persisted Film configuration: `script_to_film`, including `script`, `fps`, `default_target_duration_seconds`, and the authoritative local/remote `prompt_creator_model` selection.
+- Persisted Film configuration: `script_to_film`, including `script`, `fps`, `default_target_duration_seconds`, the authoritative local/remote `prompt_creator_model` selection, active `lora_knowledge_loras`, and an optional `style_profile_path`.
 - A Film project uses `image_model_mode: "pony"` for its optional keyframes and the backend-enforced `violets_ltx23_fp8` LTX profile for video/audio.
 - The Film profile label is **Film/T2AV + Character Ref**. It uses direct LTX I2V reference conditioning because IP-Adapter and InstantID nodes are not installed on this machine. Do not add unavailable node types merely to display a feature label.
 - The backend locks `LTX2.3_DMD_reshaped_r256.safetensors` at `1.0` and `JoyAI-Echo-content_r256.safetensors` at `0.5`; these are not optional UI LoRAs.
@@ -16,6 +16,7 @@ This guide is the handoff document for the non-music **Script-to-Film** mode. It
 | File | Role |
 | --- | --- |
 | `VRGDG_ScriptToFilmNodes.py` | Separate Film-only API routes, scene normalization/reflow, native-audio LTX prompt assembly, and stitching. |
+| `VRGDG_LoraKnowledgeBase.py` | Local JSON metadata store, safe installed-LoRA header importer, model-family compatibility, per-shot trigger resolver, Character Bible sanitization, and optional Style Profile reader. |
 | `Workflows/UsedForUIDoNotTouch/ScriptToFilm_T2AV_CharacterRef_API.json` | Dedicated API graph. Generated deterministically from the source I2V graph by the script below; never modify `Singlei2vForUI_API.json` for Film work. |
 | `tools/build_script_to_film_template.py` | Rebuilds the Film graph from the maintained I2V source and topology-prunes Music Video-only nodes. |
 | `prompts/ScriptToFilm_PromptCreator_System.txt` | The only location for Script-to-Film LLM instructions. It must retain the exact GROK start/end markers. |
@@ -41,10 +42,17 @@ camera_language, sound_design_prompt,
 optional_music_bed_path, ducking_level,
 transition_ambience_notes, transition_cut_type, transition_overlap_seconds,
 reference_image_path, film_render_mode, rendered_video_path,
-start, end, timeline_duration_seconds, timing_source
+start, end, timeline_duration_seconds, timing_source,
+lora_knowledge_refs, resolved_lora_knowledge_refs, resolved_lora_triggers
 ```
 
 For compatibility with shared Builder scene controls, normalization also retains the aliases `t2i_prompt`, `i2v_prompt`, `dialogue`, `character_reference_path`, and `video_path`. Preserve the aliases when adding new Film UI controls; the canonical Film fields remain the source of truth for external plans.
+
+### LoRA Knowledge and Character Bible boundary
+
+The Film-only Knowledge Base is intentionally not an arbitrary graph-LoRA loader. It stores technical generation metadata for an installed LoRA: model-family recommendation, a structured `trigger_map`, recommended weight, examples, notes, and an optional Civitai model ID. The runtime store is `data/lora_knowledge_base.json`, is atomic-write local user data, and is ignored by Git.
+
+`character_bible` must contain only identity/continuity data. It must never receive a LoRA filename, trigger text, model family, Civitai ID, or recommended weight. The resolver sanitizes it before returning a Film scene. A scene inherits `script_to_film.lora_knowledge_loras` unless it supplies `lora_knowledge_refs`; its prompts receive only compatible, context-matching triggers for that shot. An optional Style Profile JSON may be linked at `style_profile_path` and is resolved alongside metadata without altering the Bible. See [LORA_KNOWLEDGE_BASE.md](LORA_KNOWLEDGE_BASE.md) for the exact contract and [the user guide](../USER_GUIDES/SCRIPT_TO_FILM_LORA_KNOWLEDGE.md) for operation.
 
 ## Prompt Creator swap point
 
@@ -108,6 +116,11 @@ The builder starts from `Singlei2vForUI_API.json`, then makes these structural s
 | `POST /vrgdg/script_to_film/create_prompt_plan` | Queue the selected Prompt Creator model and return a short-lived job ID. |
 | `GET /vrgdg/script_to_film/create_prompt_plan_status` | Poll a queued Prompt Creator job until its structured Film plan is ready. |
 | `POST /vrgdg/script_to_film/client_error` | Record a sanitized browser-only Planner failure in ComfyUI logs. |
+| `GET /vrgdg/script_to_film/lora_knowledge` | Read the Film-only local LoRA metadata store and installed-LoRA availability. |
+| `POST /vrgdg/script_to_film/lora_knowledge/refresh` | Import/refresh basic metadata from already installed `.safetensors` headers; never downloads a model. |
+| `POST /vrgdg/script_to_film/lora_knowledge/upsert` | Validate and persist an edited LoRA metadata record. |
+| `POST /vrgdg/script_to_film/lora_knowledge/research_civitai` | Refresh an entry only from its explicitly saved numeric Civitai model ID. |
+| `POST /vrgdg/script_to_film/resolve_lora_prompts` | Resolve per-shot model-compatible trigger fragments and sanitize its Character Bible. |
 | `POST /vrgdg/script_to_film/save_plan` | Persist `script_to_film/film_scene_plan.json` under the project folder. |
 | `POST /vrgdg/script_to_film/build_t2av_prompt` | Produce the isolated API graph with Violets LTX loader/LoRA enforcement. |
 | `POST /vrgdg/script_to_film/measure_and_reflow` | Probe actual clip duration and return the updated full scene timeline. |
@@ -119,7 +132,8 @@ Only `transition_cut_type: "hard_cut"` skips the requested ambience overlap. Any
 
 1. Builder: open **Script-to-Film Planner**, or switch project type and open it. The Builder forces Pony for Film keyframes but sends the existing project-level advanced Violets audio-encoder/sampler/sigma settings into the Film backend.
 2. Wizard: **Settings → Script-to-Film → Open Film Planner**. The rail presents **Script** and **Film Scenes** in the former Audio/Lyrics locations; both open the same `VRGDG_ScriptToFilmUI.js` modal, not a copied planner.
-3. In either surface, create/edit the Film plan, save it, then choose **Build T2I → I2V Film**. Builder queues Pony only for ref-conditioned shots without a supplied keyframe path, queues Film LTX clips, measures each output, persists the reflow, then calls Film stitching.
+3. In either surface, use the shared **LoRA Knowledge Base** card to import installed metadata, select active compatible records, and optionally link a Style Profile. The same card and persisted `script_to_film` fields are used by both surfaces.
+4. In either surface, create/edit the Film plan, save it, then choose **Build T2I → I2V Film**. Builder resolves the scene’s LoRA metadata just before Pony and again before Film LTX assembly, queues Pony only for ref-conditioned shots without a supplied keyframe path, queues Film LTX clips, measures each output, persists the reflow, then calls Film stitching.
 
 If adding a Film field, add it in all four places: backend `_normalize_scene`, planner editing UI, Builder session/history persistence, and Wizard’s shared planner entry point. Update `WIZARD_EDITOR_PARITY.md` in the same commit.
 

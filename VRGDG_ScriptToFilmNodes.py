@@ -21,6 +21,19 @@ from aiohttp import web
 from PIL import Image
 from server import PromptServer
 
+from .VRGDG_LoraKnowledgeBase import (
+    list_knowledge,
+    load_style_profile,
+    normalize_lora_names,
+    prompt_creator_context,
+    refresh_knowledge,
+    research_civitai,
+    resolution_fragment,
+    resolve_scene_triggers,
+    sanitize_character_bible,
+    store_path as lora_knowledge_store_path,
+    upsert_entry,
+)
 from .VRGDG_MusicVideoPromptCreatorNodes import _extract_json_object, _run_text_gemma_custom
 from .VRGDG_WorkflowRunnerNodes import (
     _DEFAULT_I2V_PASS1_SIGMAS,
@@ -159,6 +172,98 @@ def _normalize_character_bible(value):
     }
 
 
+def _payload_lora_names(payload, scene=None):
+    """Select per-scene knowledge refs, falling back to Film-project refs.
+
+    A scene may deliberately narrow a project's active character/style LoRAs.
+    When it does not, the project selection is the non-destructive default.
+    """
+    source_scene = scene if isinstance(scene, dict) else {}
+    direct = normalize_lora_names(source_scene.get("lora_knowledge_refs", []))
+    if direct:
+        return direct
+    source_payload = payload if isinstance(payload, dict) else {}
+    direct = normalize_lora_names(source_payload.get("lora_knowledge_loras", source_payload.get("lora_knowledge_refs", [])))
+    if direct:
+        return direct
+    film_config = source_payload.get("script_to_film", {})
+    return normalize_lora_names(film_config.get("lora_knowledge_loras", [])) if isinstance(film_config, dict) else []
+
+
+def _payload_style_profile(payload):
+    source = payload if isinstance(payload, dict) else {}
+    film_config = source.get("script_to_film", {}) if isinstance(source.get("script_to_film"), dict) else {}
+    return load_style_profile(
+        source.get("style_profile", film_config.get("style_profile")),
+        source.get("style_profile_path", film_config.get("style_profile_path", "")),
+    )
+
+
+def _append_prompt_fragment(prompt, fragment, target):
+    text = _safe_text(prompt, 12000)
+    extra = _safe_text(fragment, 4000)
+    if not extra:
+        return text
+    missing = []
+    lower_text = text.lower()
+    for value in [piece.strip() for piece in extra.split(",") if piece.strip()]:
+        if value.lower() not in lower_text:
+            missing.append(value)
+    if not missing:
+        return text
+    joined = ", ".join(missing)
+    if target == "keyframe":
+        return _safe_text(f"{joined}, {text}".strip(" ,"), 12000)
+    sentence = f" Exact visual reference tokens for this shot: {joined}."
+    return _safe_text(f"{text.rstrip()} {sentence}".strip(), 12000)
+
+
+def _resolve_scene_lora_knowledge(scene, payload=None):
+    """Resolve Film-only LoRA metadata without contaminating Character Bible.
+
+    The keyframe and LTX prompts are resolved separately because a Pony/SDXL
+    LoRA must never be presented as an LTX-compatible adapter, and vice versa.
+    The stored trigger strings are attached only to the shot prompts.
+    """
+    source = scene if isinstance(scene, dict) else {}
+    scene_specific_names = normalize_lora_names(source.get("lora_knowledge_refs", []))
+    selected_names = _payload_lora_names(payload or {}, source)
+    style_profile = _payload_style_profile(payload or {})
+    keyframe_resolved = resolve_scene_triggers(source, selected_names, "pony")
+    ltx_resolved = resolve_scene_triggers(source, selected_names, "ltx")
+    source["character_bible"] = sanitize_character_bible(source.get("character_bible", {}), selected_names)
+    # Preserve an empty per-scene field so it continues to inherit any future
+    # project-level selection change. The resolved list records what this shot
+    # actually used at this point in time.
+    source["lora_knowledge_refs"] = scene_specific_names
+    source["resolved_lora_knowledge_refs"] = selected_names
+    source["resolved_lora_triggers"] = {
+        "keyframe": keyframe_resolved,
+        "ltx": ltx_resolved,
+    }
+    source["style_profile_link"] = {
+        "path": style_profile.get("path", ""),
+        "name": style_profile.get("name", ""),
+    }
+    keyframe_fragment = ", ".join(item for item in (
+        resolution_fragment(keyframe_resolved),
+        _safe_text(style_profile.get("keyframe_fragment", ""), 4000),
+    ) if item)
+    ltx_fragment = ", ".join(item for item in (
+        resolution_fragment(ltx_resolved),
+        _safe_text(style_profile.get("ltx_fragment", ""), 4000),
+    ) if item)
+    source["keyframe_prompt"] = _append_prompt_fragment(
+        source.get("keyframe_prompt", source.get("t2i_prompt", "")), keyframe_fragment, "keyframe"
+    )
+    source["unified_ltx_prompt"] = _append_prompt_fragment(
+        source.get("unified_ltx_prompt", source.get("i2v_prompt", "")), ltx_fragment, "ltx"
+    )
+    source["t2i_prompt"] = source["keyframe_prompt"]
+    source["i2v_prompt"] = source["unified_ltx_prompt"]
+    return source
+
+
 def _normalize_intensity(value):
     source = value if isinstance(value, dict) else {"summary": _safe_text(value, 2000)}
     return {
@@ -197,6 +302,10 @@ def _normalize_scene(raw_scene, index, fps):
         "unified_ltx_prompt": _safe_text(source.get("unified_ltx_prompt", source.get("i2v_prompt", source.get("ltx_prompt", ""))), 12000),
         "spoken_dialogue": _safe_text(source.get("spoken_dialogue", source.get("dialogue", "")), 5000),
         "character_bible": _normalize_character_bible(source.get("character_bible", {})),
+        # These are generation-metadata references only.  Trigger strings are
+        # resolved later into shot prompts and are never copied into the Bible.
+        "lora_knowledge_refs": normalize_lora_names(source.get("lora_knowledge_refs", source.get("lora_refs", []))),
+        "lora_trigger_keys": source.get("lora_trigger_keys", {}) if isinstance(source.get("lora_trigger_keys", {}), (dict, list)) else {},
         "physical_state_progression": _safe_text(source.get("physical_state_progression", ""), 4000),
         "position_continuity_notes": _safe_text(source.get("position_continuity_notes", ""), 4000),
         "action_intensity_curve": _normalize_intensity(source.get("action_intensity_curve", {})),
@@ -259,6 +368,14 @@ def _plan_payload(payload):
     fps = _int_payload(payload, "fps", _DEFAULT_FPS, 1, 120)
     raw_scenes = payload.get("scenes", payload.get("film_scenes", []))
     scenes, duration = _reflow_scenes(raw_scenes, fps)
+    selected_loras = _payload_lora_names(payload)
+    style_profile = _payload_style_profile(payload)
+    for scene in scenes:
+        _resolve_scene_lora_knowledge(scene, {
+            **(payload if isinstance(payload, dict) else {}),
+            "lora_knowledge_loras": selected_loras,
+            "style_profile": style_profile,
+        })
     return {
         "project_mode": "script_to_film",
         "fps": fps,
@@ -266,6 +383,8 @@ def _plan_payload(payload):
         "profile": _FILM_PROFILE,
         "profile_label": _FILM_PROFILE_LABEL,
         "scenes": scenes,
+        "lora_knowledge_loras": selected_loras,
+        "style_profile_path": style_profile.get("path", ""),
         "total_duration_seconds": duration,
     }
 
@@ -365,6 +484,16 @@ def _create_prompt_creator_output(payload):
         raise ValueError("Paste a script before creating a Script-to-Film plan.")
     system_prompt, system_path = _read_system_prompt()
     runner_payload = dict(payload or {})
+    selected_loras = _payload_lora_names(runner_payload)
+    style_profile = _payload_style_profile(runner_payload)
+    generation_context = prompt_creator_context(selected_loras, style_profile)
+    prompt_creator_input = script
+    if generation_context["active_loras"] or generation_context["style_profile"].get("prompt_context"):
+        # This is project data, not a second instruction block. The sole Film
+        # instruction source remains ScriptToFilm_PromptCreator_System.txt.
+        prompt_creator_input += "\n\n[GENERATION_METADATA_CONTEXT]\n"
+        prompt_creator_input += json.dumps(generation_context, ensure_ascii=False, indent=2)
+        prompt_creator_input += "\n[/GENERATION_METADATA_CONTEXT]"
     # The Film contract is a complete JSON object with an array of scene
     # records, not a one-paragraph prompt. This opt-in leaves Music Video's
     # historical output cleanup untouched.
@@ -373,7 +502,7 @@ def _create_prompt_creator_output(payload):
     result = _run_text_gemma_custom(
         runner_payload.get("model_file", runner_payload.get("text_gemma_model", "")),
         system_prompt,
-        script,
+        prompt_creator_input,
         runner_payload.get("llm_settings"),
         runner_payload,
     )
@@ -389,7 +518,12 @@ def _create_prompt_creator_output(payload):
         source_scenes = [_recovered_scene_from_unstructured_output(script, result.get("text", ""))]
         if not recovery_message:
             recovery_message = "The selected model returned JSON without a usable scenes array; one editable recovery scene was created from your script."
-    plan = _plan_payload({"fps": payload.get("fps", _DEFAULT_FPS), "scenes": source_scenes})
+    plan = _plan_payload({
+        "fps": payload.get("fps", _DEFAULT_FPS),
+        "scenes": source_scenes,
+        "lora_knowledge_loras": selected_loras,
+        "style_profile": style_profile,
+    })
     plan.update({
         "raw_text": result.get("text", ""),
         "used_model": result.get("used_model", ""),
@@ -483,7 +617,12 @@ def _measure_and_reflow(payload):
 
 
 def _film_prompt_payload(payload):
-    prompt = _safe_text(payload.get("unified_ltx_prompt", payload.get("i2v_prompt", "")), 12000)
+    raw_scene = payload.get("scene", payload) if isinstance(payload, dict) else {}
+    scene_payload = dict(payload or {})
+    if isinstance(raw_scene, dict) and raw_scene is not payload:
+        scene_payload.update(raw_scene)
+    resolved_scene = _resolve_scene_lora_knowledge(scene_payload, payload)
+    prompt = _safe_text(resolved_scene.get("unified_ltx_prompt", resolved_scene.get("i2v_prompt", "")), 12000)
     if not prompt:
         raise ValueError("Script-to-Film unified LTX prompt is empty.")
     project = _safe_project_folder(payload.get("project_folder", ""))
@@ -560,6 +699,9 @@ def _film_prompt_payload(payload):
         "planned_frames": planned_frames,
         "target_duration_seconds": target_duration,
         "fps": fps,
+        "resolved_lora_triggers": resolved_scene.get("resolved_lora_triggers", {}),
+        "lora_knowledge_refs": resolved_scene.get("resolved_lora_knowledge_refs", []),
+        "resolved_unified_ltx_prompt": prompt,
     }
 
 
@@ -680,8 +822,54 @@ def _ensure_routes():
             "system_prompt_exists": os.path.isfile(_system_prompt_path()),
             "workflow_template_path": _template_path(),
             "workflow_template_exists": os.path.isfile(_template_path()),
+            "lora_knowledge_store_path": lora_knowledge_store_path(),
             "reference_conditioning": "Direct LTX I2V keyframe/reference-image conditioning. IP-Adapter and InstantID are not loaded on this ComfyUI install.",
         })
+
+    @server.routes.get("/vrgdg/script_to_film/lora_knowledge")
+    async def script_to_film_lora_knowledge(_request):
+        try:
+            return web.json_response({"ok": True, **await asyncio.to_thread(list_knowledge)})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/lora_knowledge/refresh")
+    async def script_to_film_lora_knowledge_refresh(_request):
+        try:
+            return web.json_response({"ok": True, **await asyncio.to_thread(refresh_knowledge)})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/lora_knowledge/upsert")
+    async def script_to_film_lora_knowledge_upsert(request):
+        try:
+            payload = await request.json()
+            return web.json_response({"ok": True, **await asyncio.to_thread(upsert_entry, payload)})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/lora_knowledge/research_civitai")
+    async def script_to_film_lora_knowledge_research(request):
+        try:
+            payload = await request.json()
+            return web.json_response({"ok": True, **await asyncio.to_thread(research_civitai, payload.get("lora_name", ""))})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/resolve_lora_prompts")
+    async def script_to_film_resolve_lora_prompts(request):
+        try:
+            payload = await request.json()
+            raw_scene = payload.get("scene", payload) if isinstance(payload, dict) else {}
+            scene = _normalize_scene(raw_scene, 0, _int_payload(payload, "fps", _DEFAULT_FPS, 1, 120))
+            scene = _resolve_scene_lora_knowledge(scene, payload)
+            return web.json_response({
+                "ok": True,
+                "scene": scene,
+                "resolved_lora_triggers": scene.get("resolved_lora_triggers", {}),
+            })
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
     @server.routes.post("/vrgdg/script_to_film/plan")
     async def script_to_film_plan(request):

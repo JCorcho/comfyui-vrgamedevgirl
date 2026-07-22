@@ -11,7 +11,7 @@ import {
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
 import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260722-ltx-memory";
-import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-film-status";
+import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-lora-knowledge";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
@@ -33261,6 +33261,14 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     const span = Number(options.progressSpan ?? 100);
     const pct = (value) => Math.min(100, base + (span * value / 100));
     const label = sceneDisplayName(segment, sceneIndex);
+    progress?.set(`Film ${label}: resolving LoRA metadata for this shot…`, pct(4));
+    const resolved = await postJson("/vrgdg/script_to_film/resolve_lora_prompts", {
+      fps,
+      scene: segment,
+      lora_knowledge_loras: state.scriptToFilm?.lora_knowledge_loras || [],
+      style_profile_path: state.scriptToFilm?.style_profile_path || "",
+    }, 30000);
+    if (resolved?.scene && typeof resolved.scene === "object") Object.assign(segment, resolved.scene);
     const useReference = String(segment.film_render_mode || "i2v_t2av").toLowerCase() !== "t2av";
     const unifiedPrompt = String(segment.unified_ltx_prompt || segment.i2v_prompt || "").trim();
     if (!unifiedPrompt) throw new Error(`${label}: Script-to-Film needs a unified LTX visual + audio prompt.`);
@@ -33283,6 +33291,15 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       scene_number: sceneNumber,
       project_folder: String(projectInput.value || state.projectFolder || "").trim(),
       unified_ltx_prompt: unifiedPrompt,
+      scene: segment,
+      character_bible: segment.character_bible || {},
+      physical_state_progression: segment.physical_state_progression || "",
+      position_continuity_notes: segment.position_continuity_notes || "",
+      action_intensity_curve: segment.action_intensity_curve || {},
+      lora_knowledge_loras: state.scriptToFilm?.lora_knowledge_loras || [],
+      lora_knowledge_refs: segment.lora_knowledge_refs || [],
+      lora_trigger_keys: segment.lora_trigger_keys || {},
+      style_profile_path: state.scriptToFilm?.style_profile_path || "",
       target_duration_seconds: segment.target_duration_seconds,
       planned_frames: plannedFrames,
       film_render_mode: useReference ? "i2v_t2av" : "t2av",

@@ -162,6 +162,25 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
 
+function normalizeLoraNames(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[\n,;]/);
+  const seen = new Set();
+  return raw.map((item) => String(item || "").trim().replaceAll("\\", "/"))
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function jsonArray(value, label) {
+  const parsed = JSON.parse(String(value || "[]"));
+  if (!Array.isArray(parsed)) throw new Error(`${label} must be a JSON array.`);
+  return parsed;
+}
+
 function framesForDuration(seconds, fps) {
   const raw = Math.max(9, Math.round(Number(seconds || 4) * Number(fps || 25)) + 1);
   return Math.max(9, Math.round((raw - 1) / 8) * 8 + 1);
@@ -211,6 +230,8 @@ export function openScriptToFilmPlanner(config) {
   state.scriptToFilm = state.scriptToFilm || {};
   state.scriptToFilm.fps = Number(state.scriptToFilm.fps || 25);
   state.scriptToFilm.script = String(state.scriptToFilm.script || "");
+  state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(state.scriptToFilm.lora_knowledge_loras);
+  state.scriptToFilm.style_profile_path = String(state.scriptToFilm.style_profile_path || "").trim();
   const promptCreatorModels = promptCreatorModelChoices(state);
   state.scriptToFilm.prompt_creator_model = String(
     state.scriptToFilm.prompt_creator_model
@@ -220,6 +241,8 @@ export function openScriptToFilmPlanner(config) {
     || "",
   ).trim();
   state.segments = Array.isArray(state.segments) ? state.segments : [];
+  let loraKnowledge = { entries: [], installed_loras: [], last_refreshed: "", store_path: "" };
+  let selectedKnowledgeLora = "";
   const backdrop = document.createElement("div");
   backdrop.className = "vrgdg-film-backdrop";
   const modal = document.createElement("section");
@@ -248,8 +271,15 @@ export function openScriptToFilmPlanner(config) {
     status.textContent = message;
   };
   const syncPlan = async () => {
-    const plan = await requestJson("/vrgdg/script_to_film/plan", "POST", { fps: state.scriptToFilm.fps, scenes: state.segments });
+    const plan = await requestJson("/vrgdg/script_to_film/plan", "POST", {
+      fps: state.scriptToFilm.fps,
+      scenes: state.segments,
+      lora_knowledge_loras: state.scriptToFilm.lora_knowledge_loras,
+      style_profile_path: state.scriptToFilm.style_profile_path,
+    });
     state.segments = ensureStableSceneIds(plan.scenes);
+    state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
+    state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
     apply(`Timeline reflowed: ${Number(plan.total_duration_seconds || 0).toFixed(2)} seconds.`);
   };
   const render = () => {
@@ -266,6 +296,10 @@ export function openScriptToFilmPlanner(config) {
         state.scriptToFilm.prompt_creator_model = String(value || "").trim();
         apply(`Film Prompt Creator model set to ${state.scriptToFilm.prompt_creator_model || "none"}.`);
       }, { select: promptCreatorModels.map((model) => ({ value: model, label: model })) }),
+      field("Character Style Profile JSON (optional)", state.scriptToFilm.style_profile_path, (value) => {
+        state.scriptToFilm.style_profile_path = String(value || "").trim();
+        apply("Character Style Profile link updated. It is separate from the Character Bible.");
+      }),
       field("Keyframe image mode", "pony", () => {}, { select: [{ value: "pony", label: "Pony (VioletsT2I)" }] }),
       field("LTX profile", "film_t2av_character_ref", () => {}, { select: [{ value: "film_t2av_character_ref", label: "Film/T2AV + Character Ref" }] }),
     );
@@ -293,6 +327,8 @@ export function openScriptToFilmPlanner(config) {
           lm_studio_api_key: state.lm_studio_api_key || "",
           llm_api_provider: state.llm_api_provider || "",
           llm_api_model: state.llm_api_model || "",
+          lora_knowledge_loras: state.scriptToFilm.lora_knowledge_loras,
+          style_profile_path: state.scriptToFilm.style_profile_path,
         }, (jobStatus, elapsedSeconds) => {
           status.textContent = `Film Prompt Creator is still running (${jobStatus}, ${Math.floor(elapsedSeconds)}s): ${selectedModel || state.text_gemma_runner}…`;
         });
@@ -300,6 +336,8 @@ export function openScriptToFilmPlanner(config) {
         state.segments = ensureStableSceneIds(plan.scenes);
         state.scriptToFilm.last_prompt_creator_model = plan.used_model || selectedModel;
         state.scriptToFilm.system_prompt_path = plan.system_prompt_path || "";
+        state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
+        state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
         const recovery = String(plan.recovery_message || "").trim();
         try {
           apply(`Created ${plan.scenes.length} duration-snapped Film shots with ${plan.used_model || "the selected model"}.${recovery ? ` ${recovery}` : ""}`);
@@ -325,9 +363,131 @@ export function openScriptToFilmPlanner(config) {
     source.append(sourceGrid, script, actions, Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Target duration is authoritative. It snaps to LTX’s valid (frames − 1) % 8 = 0 frame rule. Rendered media duration replaces the target duration and shifts every following scene automatically." }));
     body.append(source);
 
+    const knowledgeCard = document.createElement("section");
+    knowledgeCard.className = "vrgdg-film-card";
+    knowledgeCard.append(
+      Object.assign(document.createElement("h3"), { textContent: "2. LoRA Knowledge Base (technical generation metadata)" }),
+      Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "This store owns trigger maps, compatibility, weights, and prompt examples. Character Bible stays identity-only; it never stores trigger words or LoRA technical details." }),
+    );
+    const knowledgeActions = document.createElement("div");
+    knowledgeActions.className = "vrgdg-film-actions";
+    const refreshKnowledge = Object.assign(document.createElement("button"), { className: "vrgdg-film-button", textContent: "Import / Refresh LoRA Metadata" });
+    refreshKnowledge.onclick = async () => {
+      try {
+        refreshKnowledge.disabled = true;
+        loraKnowledge = await requestJson("/vrgdg/script_to_film/lora_knowledge/refresh", "POST", {});
+        if (!selectedKnowledgeLora) selectedKnowledgeLora = loraKnowledge.entries?.[0]?.lora_name || "";
+        apply(`LoRA Knowledge Base refreshed: ${Number(loraKnowledge.created_count || 0)} imported, ${Number(loraKnowledge.updated_count || 0)} updated.`);
+        render();
+      } catch (error) {
+        status.textContent = `LoRA metadata import error: ${errorMessage(error)}`;
+      } finally { refreshKnowledge.disabled = false; }
+    };
+    const reloadKnowledge = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Reload Knowledge Base" });
+    reloadKnowledge.onclick = async () => {
+      try {
+        reloadKnowledge.disabled = true;
+        loraKnowledge = await requestJson("/vrgdg/script_to_film/lora_knowledge");
+        if (!selectedKnowledgeLora) selectedKnowledgeLora = loraKnowledge.entries?.[0]?.lora_name || "";
+        render();
+      } catch (error) { status.textContent = `LoRA Knowledge Base error: ${errorMessage(error)}`; }
+      finally { reloadKnowledge.disabled = false; }
+    };
+    knowledgeActions.append(refreshKnowledge, reloadKnowledge);
+    knowledgeCard.append(knowledgeActions);
+    const availableEntries = Array.isArray(loraKnowledge.entries) ? loraKnowledge.entries : [];
+    if (!availableEntries.length) {
+      knowledgeCard.append(Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "No metadata records are loaded yet. Choose Import / Refresh to scan installed LoRA headers without downloading anything." }));
+    } else {
+      const activeWrap = document.createElement("label");
+      activeWrap.className = "vrgdg-film-label";
+      activeWrap.textContent = "Active LoRA knowledge for this Film project (Ctrl/Cmd-click for multiple)";
+      const activeSelect = document.createElement("select");
+      activeSelect.className = "vrgdg-film-select";
+      activeSelect.multiple = true;
+      activeSelect.size = Math.min(8, Math.max(3, availableEntries.length));
+      const activeNames = new Set(normalizeLoraNames(state.scriptToFilm.lora_knowledge_loras).map((name) => name.toLowerCase()));
+      for (const entry of availableEntries) {
+        const option = document.createElement("option");
+        option.value = entry.lora_name;
+        option.textContent = `${entry.lora_name} · ${entry.base_model_recommendation || "unknown"} · ${entry.installed ? "installed" : "not installed"}`;
+        option.selected = activeNames.has(String(entry.lora_name || "").toLowerCase());
+        activeSelect.appendChild(option);
+      }
+      activeSelect.onchange = () => {
+        state.scriptToFilm.lora_knowledge_loras = Array.from(activeSelect.selectedOptions).map((option) => option.value);
+        apply("Active Film LoRA knowledge updated. Matching triggers will resolve per shot at render time.");
+      };
+      activeWrap.appendChild(activeSelect);
+      knowledgeCard.append(activeWrap);
+
+      if (!selectedKnowledgeLora || !availableEntries.some((entry) => entry.lora_name === selectedKnowledgeLora)) selectedKnowledgeLora = availableEntries[0].lora_name;
+      const entry = availableEntries.find((item) => item.lora_name === selectedKnowledgeLora) || availableEntries[0];
+      const editor = document.createElement("div");
+      editor.className = "vrgdg-film-grid";
+      const editorSelect = field("Edit LoRA metadata", selectedKnowledgeLora, (value) => { selectedKnowledgeLora = value; render(); }, { select: availableEntries.map((item) => ({ value: item.lora_name, label: item.lora_name })) });
+      const civitai = field("Civitai model ID (optional)", entry.civitai_model_id || "", () => {});
+      const baseModel = field("Base model recommendation", entry.base_model_recommendation || "unknown", () => {});
+      const recommendedWeight = field("Recommended weight", entry.recommended_weight ?? 1, () => {}, { type: "number" });
+      const triggerMap = field("Trigger map JSON", JSON.stringify(entry.trigger_map || {}, null, 2), () => {}, { multiline: true });
+      const positives = field("Positive patterns JSON", JSON.stringify(entry.example_positive_patterns || [], null, 2), () => {}, { multiline: true });
+      const negatives = field("Negative patterns JSON", JSON.stringify(entry.example_negative_patterns || [], null, 2), () => {}, { multiline: true });
+      const notes = field("Notes", entry.notes || "", () => {}, { multiline: true });
+      editor.append(editorSelect, civitai, baseModel, recommendedWeight, triggerMap, positives, negatives, notes);
+      knowledgeCard.append(editor);
+      const editorActions = document.createElement("div");
+      editorActions.className = "vrgdg-film-actions";
+      const saveEntry = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Save LoRA Metadata" });
+      const saveCurrentEntry = async () => {
+        const triggerValue = JSON.parse(String(triggerMap.querySelector("textarea")?.value || "{}"));
+        if (!triggerValue || Array.isArray(triggerValue) || typeof triggerValue !== "object") throw new Error("Trigger map must be a JSON object.");
+        const saved = await requestJson("/vrgdg/script_to_film/lora_knowledge/upsert", "POST", {
+          entry: {
+            ...entry,
+            lora_name: entry.lora_name,
+            civitai_model_id: civitai.querySelector("input")?.value || "",
+            base_model_recommendation: baseModel.querySelector("input")?.value || "unknown",
+            recommended_weight: Number(recommendedWeight.querySelector("input")?.value || 1),
+            trigger_map: triggerValue,
+            example_positive_patterns: jsonArray(positives.querySelector("textarea")?.value, "Positive patterns"),
+            example_negative_patterns: jsonArray(negatives.querySelector("textarea")?.value, "Negative patterns"),
+            notes: notes.querySelector("textarea")?.value || "",
+          },
+        });
+        loraKnowledge = saved;
+        selectedKnowledgeLora = entry.lora_name;
+        return saved;
+      };
+      saveEntry.onclick = async () => {
+        try {
+          await saveCurrentEntry();
+          status.textContent = `Saved LoRA metadata: ${entry.lora_name}`;
+          render();
+        } catch (error) { status.textContent = `LoRA metadata save error: ${errorMessage(error)}`; }
+      };
+      const research = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Research selected Civitai ID" });
+      research.onclick = async () => {
+        try {
+          research.disabled = true;
+          const stagedId = String(civitai.querySelector("input")?.value || "").trim();
+          if (stagedId !== String(entry.civitai_model_id || "")) {
+            await saveCurrentEntry();
+          }
+          const researched = await requestJson("/vrgdg/script_to_film/lora_knowledge/research_civitai", "POST", { lora_name: entry.lora_name });
+          loraKnowledge.entries = (loraKnowledge.entries || []).map((item) => item.lora_name === entry.lora_name ? researched.entry : item);
+          status.textContent = `Civitai metadata refreshed for ${entry.lora_name}${researched.civitai_name ? `: ${researched.civitai_name}` : ""}.`;
+          render();
+        } catch (error) { status.textContent = `Civitai research error: ${errorMessage(error)}`; }
+        finally { research.disabled = false; }
+      };
+      editorActions.append(saveEntry, research);
+      knowledgeCard.append(editorActions);
+    }
+    body.append(knowledgeCard);
+
     const scenesCard = document.createElement("section");
     scenesCard.className = "vrgdg-film-card";
-    scenesCard.append(Object.assign(document.createElement("h3"), { textContent: `2. Film scenes (${state.segments.length})` }), Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Use Pure T2AV for unconditioned establishing shots. Use I2V/T2AV + Character Ref for Pony keyframes or character locking. The selected Violets LTX FP8 profile supplies DMD 1.0, JoyAI 0.5, and the shared Audio Text Encoder / sampler controls." }));
+    scenesCard.append(Object.assign(document.createElement("h3"), { textContent: `3. Film scenes (${state.segments.length})` }), Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Use Pure T2AV for unconditioned establishing shots. Use I2V/T2AV + Character Ref for Pony keyframes or character locking. The selected Violets LTX FP8 profile supplies DMD 1.0, JoyAI 0.5, and the shared Audio Text Encoder / sampler controls." }));
     for (const [index, scene] of state.segments.entries()) {
       const details = document.createElement("details");
       details.className = "vrgdg-film-scene";
@@ -342,6 +502,7 @@ export function openScriptToFilmPlanner(config) {
         field("Target duration (seconds)", scene.target_duration_seconds, (value) => { scene.target_duration_seconds = Math.max(.1, Number(value || 4)); scene.actual_duration_seconds = 0; apply("Duration changed; LTX frame count snapped."); render(); }, { type: "number" }),
         field("Render mode", scene.film_render_mode || "i2v_t2av", (value) => { scene.film_render_mode = value; apply(); }, { select: [{ value: "i2v_t2av", label: "I2V/T2AV + Character Ref" }, { value: "t2av", label: "Pure T2AV establishing shot" }] }),
         field("Character / Pony keyframe image", scene.character_reference_path || scene.ref_image_path || "", (value) => { scene.character_reference_path = value; scene.ref_image_path = value; apply(); }),
+        field("Scene LoRA metadata refs (optional)", normalizeLoraNames(scene.lora_knowledge_refs).join(", "), (value) => { scene.lora_knowledge_refs = normalizeLoraNames(value); apply("Scene LoRA refs updated; blank uses the project selection."); }),
         field("Transition cut", scene.transition_cut_type || "auto", (value) => { scene.transition_cut_type = value; apply(); }, { select: [{ value: "auto", label: "Carry ambience when requested" }, { value: "hard_cut", label: "Hard cut: no ambience overlap" }] }),
         field("Ambience overlap (seconds)", scene.transition_overlap_seconds ?? .25, (value) => { scene.transition_overlap_seconds = Math.max(0, Math.min(2, Number(value || 0))); apply(); }, { type: "number" }),
       );
@@ -367,6 +528,15 @@ export function openScriptToFilmPlanner(config) {
         }, { multiline: name !== "ducking_level", type: name === "ducking_level" ? "number" : "text" }));
       }
       sceneBody.append(continuity);
+      const resolved = scene.resolved_lora_triggers || {};
+      const keyframeKeys = (resolved.keyframe || []).flatMap((item) => item.keys || []);
+      const ltxKeys = (resolved.ltx || []).flatMap((item) => item.keys || []);
+      if (keyframeKeys.length || ltxKeys.length) {
+        sceneBody.append(Object.assign(document.createElement("p"), {
+          className: "vrgdg-film-note",
+          textContent: `Resolved LoRA trigger keys — Pony: ${keyframeKeys.join(", ") || "none"}; LTX: ${ltxKeys.join(", ") || "none"}. Triggers are kept out of Character Bible.`,
+        }));
+      }
       details.append(sceneBody);
       scenesCard.append(details);
     }
@@ -376,8 +546,16 @@ export function openScriptToFilmPlanner(config) {
   const save = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Save Film plan" });
   save.onclick = async () => {
     try {
-      const plan = await requestJson("/vrgdg/script_to_film/save_plan", "POST", { project_folder: state.projectFolder, fps: state.scriptToFilm.fps, scenes: state.segments });
+      const plan = await requestJson("/vrgdg/script_to_film/save_plan", "POST", {
+        project_folder: state.projectFolder,
+        fps: state.scriptToFilm.fps,
+        scenes: state.segments,
+        lora_knowledge_loras: state.scriptToFilm.lora_knowledge_loras,
+        style_profile_path: state.scriptToFilm.style_profile_path,
+      });
       state.segments = plan.scenes;
+      state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
+      state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
       apply(`Saved Film plan: ${plan.plan_path}`);
     } catch (error) { status.textContent = String(error?.message || error); }
   };
@@ -403,5 +581,16 @@ export function openScriptToFilmPlanner(config) {
   document.body.appendChild(backdrop);
   render();
   apply("Film mode is active. Create or edit the duration-first shot plan.");
+  // The store is intentionally lazy: opening the modal never writes metadata.
+  // The explicit Import / Refresh action performs the installed-LoRA scan.
+  void requestJson("/vrgdg/script_to_film/lora_knowledge")
+    .then((data) => {
+      loraKnowledge = data;
+      if (!selectedKnowledgeLora) selectedKnowledgeLora = data.entries?.[0]?.lora_name || "";
+      if (document.body.contains(backdrop)) render();
+    })
+    .catch((error) => {
+      if (document.body.contains(backdrop)) status.textContent = `LoRA Knowledge Base unavailable: ${errorMessage(error)}`;
+    });
   return { close: () => backdrop.remove(), refresh: render };
 }
