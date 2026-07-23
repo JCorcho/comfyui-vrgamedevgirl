@@ -16,7 +16,7 @@
       "flags": {},
       "order": 0,
       "mode": 0,
-      "title": "1. Search safe Civitai candidates",
+      "title": "1. Search Civitai recipe candidates",
       "inputs": [
         {
           "name": "concept_query",

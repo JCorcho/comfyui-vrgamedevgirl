@@ -22,7 +22,10 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-_API_ROOT = "https://civitai.com/api/v1"
+_SAFE_API_ROOT = "https://civitai.com/api/v1"
+_ADULT_API_ROOT = "https://civitai.red/api/v1"
+_SAFE_SITE_ROOT = "https://civitai.com"
+_ADULT_SITE_ROOT = "https://civitai.red"
 _USER_AGENT = "VRGDG-Concept-Research/1.0 (local ComfyUI recipe researcher)"
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 _MAX_PROMPT_CHARS = 16000
@@ -34,6 +37,14 @@ _TOKEN_PATTERN = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _NOISE_TOKENS = {
     "a", "an", "and", "at", "by", "for", "from", "image", "in", "of", "on",
     "photo", "pose", "recipe", "scene", "style", "the", "to", "with",
+}
+_QUERY_PHRASE_ALIASES = {
+    # Civitai metadata often uses the spaced phrase even when a user searches
+    # its common single-token shorthand. Keep this limited and literal: it
+    # improves recall without pretending a broad semantic match is exact.
+    "doggystyle": ("doggy style", "doggy-style", "from behind", "rear entry"),
+    "doggy style": ("doggystyle", "doggy-style", "from behind", "rear entry"),
+    "doggy-style": ("doggystyle", "doggy style", "from behind", "rear entry"),
 }
 
 
@@ -100,7 +111,8 @@ def _relevance_score(query: str, prompt: str) -> float:
     tokens = _query_tokens(query)
     if not tokens or not normalized_prompt:
         return 0.0
-    phrase_hit = bool(normalized_query and normalized_query in normalized_prompt)
+    phrase_variants = (normalized_query,) + _QUERY_PHRASE_ALIASES.get(normalized_query, ())
+    phrase_hit = any(variant and variant in normalized_prompt for variant in phrase_variants)
     hits = sum(1 for token in tokens if re.search(rf"\b{re.escape(token)}\b", normalized_prompt))
     token_ratio = hits / len(tokens)
     # A direct phrase is strong evidence.  Otherwise retain partial semantic
@@ -201,6 +213,13 @@ def _resource_references(meta: dict[str, Any]) -> tuple[list[dict[str, Any]], li
         elif resource_type in {"checkpoint", "model"} and version_id:
             checkpoints.append(version_id)
 
+    # Civitai.red image metadata commonly represents the checkpoint only as a
+    # Model URN. Treat that as a checkpoint resource so the later short-list
+    # resolution can validate its base model without scraping pages.
+    model_version_id = _version_id_from_value(_meta_value(meta, "Model", "model"))
+    if model_version_id:
+        checkpoints.append(model_version_id)
+
     prompt = _text(_meta_value(meta, "prompt"), _MAX_PROMPT_CHARS)
     for match in _LORA_TAG_PATTERN.finditer(prompt):
         add_lora("", match.group("name"), match.group("weight") or 1.0)
@@ -229,9 +248,10 @@ def _recipe_score(relevance: float, completeness: dict[str, Any], stats: dict[st
     return round(min(100.0, relevance * 50.0 + core_score * 35.0 + min(15.0, math.log10(reactions + 1.0) * 3.5)), 2)
 
 
-def _source_urls(image_id: str, post_id: str) -> tuple[str, str]:
-    image_url = f"https://civitai.com/images/{image_id}" if image_id else ""
-    post_url = f"https://civitai.com/posts/{post_id}" if post_id else ""
+def _source_urls(image_id: str, post_id: str, site_root: str = _SAFE_SITE_ROOT) -> tuple[str, str]:
+    root = _text(site_root, 500).rstrip("/") or _SAFE_SITE_ROOT
+    image_url = f"{root}/images/{image_id}" if image_id else ""
+    post_url = f"{root}/posts/{post_id}" if post_id else ""
     return image_url, post_url
 
 
@@ -245,6 +265,8 @@ class CivitaiClient:
     """
 
     token: str = ""
+    api_root: str = _SAFE_API_ROOT
+    site_root: str = _SAFE_SITE_ROOT
     timeout_seconds: float = 20.0
     min_request_interval: float = 0.35
     max_retries: int = 3
@@ -255,12 +277,20 @@ class CivitaiClient:
 
     def __post_init__(self) -> None:
         self.token = _text(self.token or os.environ.get("CIVITAI_API_TOKEN", ""), 4000)
+        self.api_root = _text(self.api_root, 500).rstrip("/")
+        self.site_root = _text(self.site_root, 500).rstrip("/")
+        allowed_pairs = {
+            (_SAFE_API_ROOT, _SAFE_SITE_ROOT),
+            (_ADULT_API_ROOT, _ADULT_SITE_ROOT),
+        }
+        if (self.api_root, self.site_root) not in allowed_pairs:
+            raise CivitaiAPIError("Civitai client was configured with an unsupported API endpoint.")
         self.timeout_seconds = max(1.0, float(self.timeout_seconds))
         self.min_request_interval = max(0.0, float(self.min_request_interval))
         self.max_retries = max(0, min(8, int(self.max_retries)))
 
     def _url(self, path_or_url: str, params: dict[str, Any] | None = None) -> str:
-        url = path_or_url if str(path_or_url).startswith(("https://", "http://")) else f"{_API_ROOT}/{str(path_or_url).lstrip('/')}"
+        url = path_or_url if str(path_or_url).startswith(("https://", "http://")) else f"{self.api_root}/{str(path_or_url).lstrip('/')}"
         if not params:
             return url
         encoded = urlencode([(key, value) for key, value in params.items() if value not in (None, "")], doseq=True)
@@ -324,8 +354,10 @@ def _image_pages(client: CivitaiClient, query: str, base_model: str, safe_only: 
         "period": "AllTime",
         "query": query,
     }
-    if safe_only:
-        params["nsfw"] = "false"
+    # Explicitly send both values. Omitting ``nsfw`` does *not* mean
+    # adult-allowed on Civitai's image API; it can silently return the default
+    # safe-only result set. The user-selected content mode must be preserved.
+    params["nsfw"] = "false" if safe_only else "true"
     if base_model and _normalise_base_model(base_model) != "any":
         # Civitai accepts a base-model filter but its current search behaviour
         # can be broad; research_concept repeats the check against metadata.
@@ -351,7 +383,13 @@ def _image_pages(client: CivitaiClient, query: str, base_model: str, safe_only: 
     return images, warnings
 
 
-def _candidate_shell(item: dict[str, Any], query: str, requested_base: str, safe_only: bool) -> dict[str, Any] | None:
+def _candidate_shell(
+    item: dict[str, Any],
+    query: str,
+    requested_base: str,
+    safe_only: bool,
+    site_root: str = _SAFE_SITE_ROOT,
+) -> dict[str, Any] | None:
     meta = item.get("meta", {}) if isinstance(item.get("meta"), dict) else {}
     prompt = _text(_meta_value(meta, "prompt"), _MAX_PROMPT_CHARS)
     if not prompt:
@@ -360,7 +398,11 @@ def _candidate_shell(item: dict[str, Any], query: str, requested_base: str, safe
     if safe_only and (bool(item.get("nsfw", False)) or nsfw_level in {"mature", "x", "xxx"}):
         return None
     actual_base = _text(_meta_value(meta, "baseModel", "base_model") or item.get("baseModel", ""), 300)
-    if requested_base and not _base_models_match(requested_base, actual_base):
+    # The server has already been asked for the requested base model. Some
+    # adult Civitai metadata omits meta.baseModel, so defer that validation to
+    # the checkpoint version resolver when the field is absent. Explicitly
+    # present mismatches remain rejected here.
+    if requested_base and actual_base and not _base_models_match(requested_base, actual_base):
         return None
     lora_refs, checkpoint_ids = _resource_references(meta)
     completeness = _metadata_completeness(meta, bool(lora_refs))
@@ -375,7 +417,7 @@ def _candidate_shell(item: dict[str, Any], query: str, requested_base: str, safe
     if not image_id:
         return None
     post_id = _int_text(item.get("postId", ""))
-    source_url, post_url = _source_urls(image_id, post_id)
+    source_url, post_url = _source_urls(image_id, post_id, site_root)
     return {
         "candidate_id": f"civitai_image_{image_id}",
         "civitai_image_id": image_id,
@@ -383,7 +425,8 @@ def _candidate_shell(item: dict[str, Any], query: str, requested_base: str, safe
         "source_url": source_url,
         "post_url": post_url,
         "creator": _text(item.get("username", ""), 300),
-        "base_model": actual_base or _text(requested_base, 300),
+        "base_model": actual_base,
+        "base_model_verification": "metadata" if actual_base else "server_filter_only",
         "positive_prompt": prompt,
         "negative_prompt": _text(_meta_value(meta, "negativePrompt", "negative_prompt"), _MAX_NEGATIVE_CHARS),
         "seed": _text(_meta_value(meta, "seed"), 120),
@@ -463,9 +506,41 @@ def research_concept(
         raise ValueError("Concept query is required.")
     requested_base = _text(base_model, 300)
     limit = max(1, min(20, int(max_candidates)))
-    api = client or CivitaiClient()
-    images, warnings = _image_pages(api, query, requested_base, bool(safe_only), max_pages)
-    shells = [shell for shell in (_candidate_shell(item, query, requested_base, bool(safe_only)) for item in images) if shell]
+    content_mode = "safe_only" if safe_only else "adult_allowed"
+    api = client
+    warnings: list[str] = []
+    if api is None:
+        primary_api_root, primary_site_root = (
+            (_SAFE_API_ROOT, _SAFE_SITE_ROOT) if safe_only else (_ADULT_API_ROOT, _ADULT_SITE_ROOT)
+        )
+        api = CivitaiClient(api_root=primary_api_root, site_root=primary_site_root)
+        try:
+            images, warnings = _image_pages(api, query, requested_base, bool(safe_only), max_pages)
+        except CivitaiAPIError as primary_error:
+            if safe_only:
+                raise
+            # Civitai.red is the intentional primary adult endpoint. Its API
+            # can be transiently unavailable, so retain adult-allowed search
+            # through the public API rather than silently falling back to SFW.
+            api = CivitaiClient(api_root=_SAFE_API_ROOT, site_root=_SAFE_SITE_ROOT)
+            images, warnings = _image_pages(api, query, requested_base, False, max_pages)
+            warnings.insert(
+                0,
+                "Civitai.red was temporarily unavailable; the search used Civitai.com with its explicit adult-content API filter instead. "
+                f"Original endpoint error: {primary_error}",
+            )
+    else:
+        images, warnings = _image_pages(api, query, requested_base, bool(safe_only), max_pages)
+
+    site_root = _text(getattr(api, "site_root", ""), 500) or (_SAFE_SITE_ROOT if safe_only else _ADULT_SITE_ROOT)
+    shells = [
+        shell
+        for shell in (
+            _candidate_shell(item, query, requested_base, bool(safe_only), site_root)
+            for item in images
+        )
+        if shell
+    ]
     shells.sort(
         key=lambda item: (
             -_recipe_score(item["relevance_score"], item["metadata_completeness"], item["reactions"]),
@@ -477,11 +552,26 @@ def research_concept(
     # requests when Civitai sends a broad semantic-search result page.
     shortlisted = shells[: max(limit * 2, limit)]
     candidates = [_resolve_candidate_resources(candidate, api) for candidate in shortlisted]
+    validated_candidates = []
+    for candidate in candidates:
+        resolved_base = _text(candidate.get("base_model", ""), 300)
+        if requested_base and resolved_base and not _base_models_match(requested_base, resolved_base):
+            continue
+        if requested_base and not resolved_base:
+            # The request itself was filtered server-side, but the returned
+            # metadata gave us no version/base-model field to independently
+            # inspect. Keep it available for human review and mark that fact.
+            candidate["base_model"] = requested_base
+            candidate["base_model_verification"] = "server_filter_only"
+        elif resolved_base:
+            candidate["base_model_verification"] = "metadata"
+        validated_candidates.append(candidate)
+    candidates = validated_candidates
     candidates.sort(key=lambda item: (-_number(item.get("candidate_score"), 0.0), item["candidate_id"]))
     candidates = candidates[:limit]
     if not candidates:
         warnings.append(
-            "No safe public images matched both the requested base model and enough visible generation metadata. "
+            f"No {'safe' if safe_only else 'adult-allowed'} public images matched both the requested base model and enough visible generation metadata. "
             "Try a broader concept phrase, another base model, or retry later."
         )
     for candidate in candidates:
@@ -490,6 +580,8 @@ def research_concept(
         "schema_version": 1,
         "provider": "civitai_public_api",
         "access_mode": "public_api_with_metadata",
+        "content_mode": content_mode,
+        "api_endpoint": _text(getattr(api, "api_root", ""), 500) or "injected_test_client",
         "query": query,
         "base_model_filter": requested_base or "Any",
         "safe_only": bool(safe_only),

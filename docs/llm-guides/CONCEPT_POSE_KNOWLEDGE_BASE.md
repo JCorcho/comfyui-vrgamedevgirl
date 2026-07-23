@@ -79,7 +79,7 @@ All node payloads are JSON strings so they can be inspected, saved, or forwarded
 
 ## Phase 2: Civitai research intake
 
-The only networked code is `tools/civitai_concept_researcher/researcher.py`. It uses Civitai's public `/api/v1/images` endpoint with `withMeta=true`, requests up to one 100-item page by default, then locally requires visible prompt evidence, the requested visible `meta.baseModel`, and at least five of seven core recipe fields. Server-side semantic/base-model filtering is treated as a hint, not as a trusted guarantee.
+The only networked code is `tools/civitai_concept_researcher/researcher.py`. It uses Civitai's `/api/v1/images` endpoint with `withMeta=true`, requests up to one 100-item page by default, then locally requires visible prompt evidence and at least five of seven core recipe fields. It validates a visible `meta.baseModel` or a resolved checkpoint base model when either is present. If Civitai omits both, the candidate may be retained only under the server-side base-model filter and is marked `base_model_verification: server_filter_only` for human review. `safe_only=True` explicitly sends `nsfw=false` to `civitai.com`; `safe_only=False` explicitly sends `nsfw=true` to `civitai.red`, then falls back to `civitai.com` with the same adult filter if Red is unavailable. Never implement adult-allowed mode by omitting the `nsfw` parameter: that can silently return a safe-only result set.
 
 For its small pre-ranked pool, the helper resolves checkpoint and LoRA IDs through `/api/v1/model-versions/<id>`. It spaces requests by at least 0.35 seconds, retries temporary network/429/5xx failures, and honors a `Retry-After` header. It uses only the standard library. Public metadata requires no login; an optional `CIVITAI_API_TOKEN` environment variable is read only at runtime if an owner needs authenticated access. Never put a token in source, JSON, workflow metadata, or documentation examples.
 
@@ -91,7 +91,7 @@ All Phase 2 nodes live in **VRGDG → Knowledge → Concept Research**.
 
 | Node | Role |
 | --- | --- |
-| `VRGDG Concept Research: Search Civitai` | Calls the external helper and outputs review-only candidate JSON. Offers Pony, Anima, Any, or an optional custom base-model override. |
+| `VRGDG Concept Research: Search Civitai` | Calls the external helper and outputs review-only candidate JSON. Offers Pony, Anima, Any, an optional custom base-model override, and a Safe-only search switch (on = SFW, off = adult-allowed). |
 | `VRGDG Concept Research: View Candidate` | Displays one exact candidate (full prompts, LoRAs, parameters, URLs, completeness) by its `candidate_id`. |
 | `VRGDG Concept Research: Save Approved Candidates` | Explicitly saves one or more comma-separated IDs, or `all`, through `save_recipe()` into `knowledge_base/concepts/local/`. Re-saving an image updates the stable `civitai_image_<id>` recipe instead of duplicating it. |
 

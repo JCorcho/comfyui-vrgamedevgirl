@@ -64,7 +64,8 @@ function resultWidgets(nodeClass, message) {
       `Found ${count} candidate${count === 1 ? "" : "s"}.`,
       `Query: ${oneLine(data.query)}`,
       `Base model: ${oneLine(data.base_model_filter)}`,
-      `Safe-only: ${data.safe_only === false ? "off" : "on"}`,
+      `Content mode: ${data.safe_only === false ? "adult allowed" : "safe only"}`,
+      `Endpoint: ${oneLine(data.api_endpoint)}`,
       "",
       "Select a result by pasting its Candidate ID into the Review node. The Review node defaults to the first result when left blank.",
     ].join("\n");
@@ -75,6 +76,12 @@ function resultWidgets(nodeClass, message) {
   }
 
   if (nodeClass === "VRGDG_ConceptResearchViewCandidate") {
+    if (data.action_required) {
+      const warnings = Array.isArray(data.warnings) && data.warnings.length
+        ? `\n\n${data.warnings.join("\n")}`
+        : "";
+      return [["Review status", `${data.action_required}${warnings}`]];
+    }
     const overview = [
       `Candidate ID: ${oneLine(data.candidate_id)}`,
       `Model: ${oneLine(data.model_name)}`,

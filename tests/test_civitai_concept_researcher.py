@@ -15,6 +15,7 @@ for path in (ROOT, TOOLS):
 import VRGDG_ConceptPoseKnowledgeBase as concept_kb  # noqa: E402
 import VRGDG_ConceptResearchNodes as research_nodes  # noqa: E402
 from civitai_concept_researcher import research_concept  # noqa: E402
+from civitai_concept_researcher.researcher import _relevance_score  # noqa: E402
 
 
 class FakeCivitaiClient:
@@ -140,6 +141,29 @@ class CivitaiConceptResearchTests(unittest.TestCase):
         image_call = client.calls[0]
         self.assertEqual("/images", image_call[0])
         self.assertEqual("true", image_call[1]["withMeta"])
+        self.assertEqual("false", image_call[1]["nsfw"])
+
+    def test_adult_allowed_research_explicitly_requests_nsfw_and_keeps_adult_candidates(self):
+        client = FakeCivitaiClient()
+        result = research_concept("arched_back", "Pony", 8, safe_only=False, client=client)
+        self.assertEqual("adult_allowed", result["content_mode"])
+        self.assertEqual(2, result["candidate_count"])
+        self.assertIn("civitai_image_103", [item["candidate_id"] for item in result["candidates"]])
+        adult_candidate = next(item for item in result["candidates"] if item["candidate_id"] == "civitai_image_103")
+        self.assertEqual("https://civitai.red/images/103", adult_candidate["source_url"])
+        image_call = client.calls[0]
+        self.assertEqual("true", image_call[1]["nsfw"])
+
+    def test_review_node_reports_an_empty_search_without_throwing(self):
+        node = research_nodes.VRGDG_ConceptResearchViewCandidate()
+        result = node.view('{"candidates": [], "warnings": ["No candidates found."]}', "")
+        message = __import__("json").loads(result["result"][0])
+        self.assertEqual(0, message["candidate_count"])
+        self.assertIn("nothing to review", message["action_required"])
+        self.assertEqual("", result["result"][1])
+
+    def test_common_concept_aliases_match_visible_prompt_phrases(self):
+        self.assertGreater(_relevance_score("doggystyle", "doggy style, from behind, detailed pose"), 0.0)
 
     def test_reviewed_candidate_saves_to_phase_one_store_and_best_match_reads_it(self):
         payload = research_concept("arched_back", "Pony", 8, safe_only=True, client=FakeCivitaiClient())

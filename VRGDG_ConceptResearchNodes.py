@@ -163,7 +163,15 @@ class VRGDG_ConceptResearchCivitai:
                 "concept_query": ("STRING", {"default": "arched_back", "multiline": False}),
                 "base_model": (["Pony", "Anima", "Any"], {"default": "Pony"}),
                 "max_candidates": ("INT", {"default": 8, "min": 1, "max": 20, "step": 1}),
-                "safe_only": ("BOOLEAN", {"default": True}),
+                "safe_only": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "label_on": "Safe-only search",
+                        "label_off": "Adult-allowed search",
+                        "tooltip": "On: search SFW Civitai results. Off: search adult-allowed results through Civitai.red, with an explicit Civitai.com adult-filter fallback if needed.",
+                    },
+                ),
             },
             "optional": {
                 "custom_base_model": ("STRING", {"default": "", "placeholder": "Optional override, e.g. a future Civitai base family"}),
@@ -203,6 +211,15 @@ class VRGDG_ConceptResearchViewCandidate:
         candidates = [item for item in payload["candidates"] if isinstance(item, dict)]
         selected_id = _text(candidate_id, 180)
         selected = next((item for item in candidates if _text(item.get("candidate_id", ""), 180) == selected_id), None) if selected_id else (candidates[0] if candidates else None)
+        if not candidates:
+            result = {
+                "candidate_count": 0,
+                "action_required": "No candidates were returned, so there is nothing to review yet. Broaden the concept, choose another base model, or retry the selected content mode.",
+                "warnings": payload.get("warnings", []),
+                "review_required": False,
+            }
+            text = _json_output(result)
+            return _text_ui_result(text, text, "")
         if selected is None:
             raise ValueError("No matching candidate is available. Run Search Civitai first and use its candidate_id.")
         text = _json_output(selected)

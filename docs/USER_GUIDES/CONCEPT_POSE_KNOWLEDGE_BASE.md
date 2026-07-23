@@ -8,7 +8,7 @@ Five working canvases are already installed in ComfyUI's **Workflows** sidebar,
 inside the **VRGDG Concept Recipe Tests** subfolder. Refresh that sidebar and
 open these files in order:
 
-1. **Search and Review** — safe research only; it cannot save anything.
+1. **Search and Review** — review-only research; it cannot save anything. Turn **Safe-only search** on for SFW results or off for adult-allowed results.
 2. **Approve and Save** — paste the candidate ID you reviewed in the first workflow, choose your local score, then queue it.
 3. **Browse Local Recipes** — lists, views, and runs Best Match without writing.
 4. **Manual Add or Edit Test Recipe** — creates a disposable `manual_test_pose_01`; queue it again after changing a field to test updates.
@@ -48,7 +48,15 @@ Each node also displays its returned JSON directly in the ComfyUI node result, s
 3. After you have reviewed it, connect the search JSON to **VRGDG Concept Research: Save Approved Candidates**. Enter the selected ID (or comma-separated IDs), choose a local `quality_score`, add your test notes, and run it.
 4. Use **VRGDG Concept Recipes: View Concept** or **Best Match** to confirm the approved recipe is now in your local library.
 
-The search defaults to safe-only public Civitai results. It relies on Civitai's labels, so still review every candidate before using it. The local library stores only the candidates you explicitly save. Saving the same Civitai image again updates that recipe instead of creating a duplicate.
+The search defaults to safe-only public Civitai results. Turn **Safe-only
+search** off when you intentionally want adult-allowed results. That mode uses
+the Civitai.red API first; if it is temporarily unavailable, it retries through
+Civitai.com with an explicit adult filter rather than silently changing back to
+safe-only. The search summary tells you which endpoint was used. Civitai's
+labels are not a guarantee about every prompt, so review every candidate before
+using it. The local library stores only the candidates you explicitly save.
+Saving the same Civitai image again updates that recipe instead of creating a
+duplicate.
 
 If you prefer the terminal, run:
 

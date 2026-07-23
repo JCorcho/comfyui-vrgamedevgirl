@@ -14,8 +14,9 @@ From the `comfyui-vrgamedevgirl` custom-node directory on this machine:
 ```
 
 Use `--base-model Anima` for Anima, `--base-model Any` for no local model-family
-filter, and `--include-nsfw` only when an adult-content review is intentionally
-required. The normal node defaults to safe-only research.
+filter, and `--include-nsfw` when an adult-content review is intentionally
+required. The normal node defaults to safe-only research; its **Safe-only
+search** switch can be turned off for the same adult-allowed mode.
 
 ## Access and safety
 
@@ -31,6 +32,10 @@ required. The normal node defaults to safe-only research.
   returning a candidate.
 - A `safe_only` result relies on Civitai's public NSFW labels. It is not a
   visual moderation or a guarantee about every prompt's content.
+- Adult-allowed research explicitly requests `nsfw=true` from the Civitai API.
+  It uses `civitai.red/api/v1` first and falls back to `civitai.com/api/v1`
+  with the same adult filter only when the Red endpoint is temporarily down.
+  The returned image/post links identify the endpoint actually used.
 
 ## Output contract
 
