@@ -145,6 +145,8 @@ Only `transition_cut_type: "hard_cut"` skips the requested ambience overlap. Any
 3. In either surface, use the shared **LoRA Knowledge Base** card to import installed metadata, select active compatible records, and optionally link a Style Profile. The same card and persisted `script_to_film` fields are used by both surfaces.
 4. In either surface, create/edit the Film plan, save it, then choose **Build T2I → I2V Film**. Builder resolves the scene’s LoRA metadata just before Pony and again before Film LTX assembly, queues Pony only for ref-conditioned shots without a supplied keyframe path, queues Film LTX clips, measures each output, persists the reflow, then calls Film stitching.
 
+The shared Planner's `field()` helper supports `commitOnly` inputs for edits whose handlers rebuild the modal or start asynchronous work. Target duration and Concept / pose use this policy: commit on `change` (blur) or `Enter`, never on `input`. Do not attach `render()` or an async suggestion refresh to a keystroke handler, because replacing the modal during composition discards focus and makes multi-character values impossible to enter.
+
 If adding a Film field, add it in all four places: backend `_normalize_scene`, planner editing UI, Builder session/history persistence, and Wizard’s shared planner entry point. Update `WIZARD_EDITOR_PARITY.md` in the same commit.
 
 ## Validation and smoke test

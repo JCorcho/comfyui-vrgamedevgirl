@@ -72,6 +72,8 @@ Open a scene in the **Film scenes** section to edit it. The most important choic
 | **Transition cut** | Choose **Hard cut** to prevent ambience overlap; leave the normal setting to allow overlap when transition ambience is requested. |
 | **Ambience overlap** | The amount of preceding atmosphere/action tail that can carry across a normal cut. |
 
+When manually changing **Target duration** or **Concept / pose**, type the whole value first, then press `Enter` or click outside the field to apply it. This deliberately waits for a complete value before reflowing the timeline or refreshing recipe suggestions.
+
 The remaining continuity fields are deliberately first-class controls, not hidden metadata:
 
 - **character bible** — face, body, visual identifiers, and clothing state;

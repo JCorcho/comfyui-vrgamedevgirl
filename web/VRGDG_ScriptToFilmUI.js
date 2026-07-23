@@ -235,8 +235,24 @@ function field(label, value, onChange, options = {}) {
       control.appendChild(option);
     }
   }
-  control.addEventListener("input", () => onChange(control.type === "number" ? Number(control.value) : control.value));
-  control.addEventListener("change", () => onChange(control.type === "number" ? Number(control.value) : control.value));
+  const emitChange = () => onChange(control.type === "number" ? Number(control.value) : control.value);
+  if (options.commitOnly) {
+    // Some handlers rebuild the planner or begin async work. Do not replace the
+    // active control while the user is still composing a value.
+    control.title = options.commitHint || "Press Enter or click outside this field to apply the change.";
+    control.addEventListener("change", emitChange);
+    if (!options.multiline && !options.select) {
+      control.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          control.blur();
+        }
+      });
+    }
+  } else {
+    control.addEventListener("input", emitChange);
+    control.addEventListener("change", emitChange);
+  }
   wrap.appendChild(control);
   return wrap;
 }
@@ -642,7 +658,7 @@ export function openScriptToFilmPlanner(config) {
       const core = document.createElement("div"); core.className = "vrgdg-film-grid";
       core.append(
         field("Shot label", scene.label, (value) => { scene.label = value; apply(); }, {}),
-        field("Target duration (seconds)", scene.target_duration_seconds, (value) => { scene.target_duration_seconds = Math.max(.1, Number(value || 4)); scene.actual_duration_seconds = 0; apply("Duration changed; LTX frame count snapped."); render(); }, { type: "number" }),
+        field("Target duration (seconds)", scene.target_duration_seconds, (value) => { scene.target_duration_seconds = Math.max(.1, Number(value || 4)); scene.actual_duration_seconds = 0; apply("Duration changed; LTX frame count snapped."); render(); }, { type: "number", commitOnly: true }),
         field("Render mode", scene.film_render_mode || "i2v_t2av", (value) => { scene.film_render_mode = value; apply(); }, { select: [{ value: "i2v_t2av", label: "I2V/T2AV + Character Ref" }, { value: "t2av", label: "Pure T2AV establishing shot" }] }),
         field(`Character / ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} keyframe image`, scene.character_reference_path || scene.ref_image_path || "", (value) => { scene.character_reference_path = value; scene.ref_image_path = value; apply(); }),
         field("Concept / pose (optional override)", scene.concept_key || scene.pose_concept || scene.concept || "", (value) => {
@@ -651,7 +667,7 @@ export function openScriptToFilmPlanner(config) {
           conceptResearchReviews.delete(String(scene.id || ""));
           apply("Concept / pose updated. Matching local recipes are being checked.");
           void loadSceneSuggestions(scene, { force: true });
-        }),
+        }, { commitOnly: true }),
         field("Scene LoRA metadata refs (optional)", normalizeLoraNames(scene.lora_knowledge_refs).join(", "), (value) => { scene.lora_knowledge_refs = normalizeLoraNames(value); apply("Scene LoRA refs updated; blank uses the project selection."); }),
         field("Transition cut", scene.transition_cut_type || "auto", (value) => { scene.transition_cut_type = value; apply(); }, { select: [{ value: "auto", label: "Carry ambience when requested" }, { value: "hard_cut", label: "Hard cut: no ambience overlap" }] }),
         field("Ambience overlap (seconds)", scene.transition_overlap_seconds ?? .25, (value) => { scene.transition_overlap_seconds = Math.max(0, Math.min(2, Number(value || 0))); apply(); }, { type: "number" }),
