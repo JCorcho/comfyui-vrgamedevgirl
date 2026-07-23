@@ -107,6 +107,14 @@ The repository tracks five GUI-format workflows under `Workflows/KnowledgeBase/`
 4. Manual Add/Edit writes only a clearly named disposable record, `manual_test_pose_01`.
 5. Delete removes only that disposable record.
 
+The companion frontend script `web/VRGDG_ConceptResearchResults.js` renders
+the backend's review-only `ui.text` payload directly inside the three Concept
+Research nodes. Preserve this behavior when changing their return data: Search
+must show the actual `candidate_count` plus a concise candidate directory;
+View Candidate must show the selected candidate's full recipe fields; Save
+Approved must show the local save result. The normal STRING/INT outputs remain
+the source of truth for graph wiring.
+
 Do not combine the save or delete actions into the research/review canvas. That would make a routine test queue capable of mutating a user's persistent local library.
 
 ## Reproduction steps

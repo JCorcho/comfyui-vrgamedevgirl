@@ -17,6 +17,13 @@ open these files in order:
 The tracked source copies live in `custom_nodes/comfyui-vrgamedevgirl/Workflows/KnowledgeBase/`; the installed copies live in `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/`. None of these canvases loads a generation model or touches the Music Video pipeline.
 After workflow 05 runs, the local-only `manual_test_pose` concept is removed entirely rather than being left behind as an empty record.
 
+After a Search and Review run, the **Search** node itself shows a readable
+`Search summary` and `Candidate directory` below its controls. `max_candidates`
+is an upper limit, not a promise: the summary reports the actual count returned.
+The **Review the first candidate** node shows the first matching candidate by
+default, including its Candidate ID, prompts, settings, LoRAs, and Civitai link.
+Paste a different Candidate ID into that node to inspect another result.
+
 1. In ComfyUI, search for **VRGDG Concept Recipes: List Concepts**. Run it to see the available concepts.
 2. Connect **View Concept** and enter a key such as `arched_back` to inspect its recipes.
 3. To save your own, use **Save Recipe**. Enter the concept key, model family, full positive/negative prompts, LoRAs as JSON, seed, sampler settings, notes, and a `quality_score` from 0–10.
