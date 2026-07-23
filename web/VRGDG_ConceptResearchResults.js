@@ -50,7 +50,7 @@ function usableHttpUrl(value) {
   }
 }
 
-function reviewTargets(searchNode) {
+function connectedTargets(searchNode, comfyClass) {
   const graph = searchNode.graph || app.graph;
   const output = searchNode.outputs?.find((item) => item?.name === "candidates_json");
   const links = Array.isArray(output?.links) ? output.links : [];
@@ -58,7 +58,15 @@ function reviewTargets(searchNode) {
     const link = graph?.links?.[linkId];
     const targetId = Array.isArray(link) ? link[3] : link?.target_id;
     return graph?.getNodeById?.(targetId);
-  }).filter((node) => node?.comfyClass === "VRGDG_ConceptResearchViewCandidate");
+  }).filter((node) => node?.comfyClass === comfyClass);
+}
+
+function reviewTargets(searchNode) {
+  return connectedTargets(searchNode, "VRGDG_ConceptResearchViewCandidate");
+}
+
+function saveTargets(searchNode) {
+  return connectedTargets(searchNode, "VRGDG_ConceptResearchSaveApproved");
 }
 
 function setNodeWidgetValue(node, name, value) {
@@ -80,6 +88,8 @@ function showReviewToast(payload) {
 }
 
 function addSearchCandidateActions(node, candidates) {
+  const reviews = reviewTargets(node);
+  const saves = saveTargets(node);
   for (const [index, candidate] of candidates.entries()) {
     const ordinal = index + 1;
     const candidateId = oneLine(candidate?.candidate_id, "");
@@ -89,28 +99,33 @@ function addSearchCandidateActions(node, candidates) {
         window.open(imageUrl, "_blank", "noopener,noreferrer");
       });
     }
-    node.addWidget("button", `Review result #${ordinal}`, candidateId, () => {
-      const targets = reviewTargets(node);
-      for (const target of targets) {
-        setNodeWidgetValue(target, "candidate_id", candidateId);
-        setNodeWidgetValue(target, "candidate_number", ordinal);
-      }
-      if (!targets.length) {
-        showReviewToast({
-          severity: "warn",
-          summary: "Review node not connected",
-          detail: "Connect Search candidates_json to a View Candidate node, then click this button again.",
-          life: 4500,
-        });
-      } else {
+    if (reviews.length) {
+      node.addWidget("button", `Review result #${ordinal}`, candidateId, () => {
+        for (const target of reviews) {
+          setNodeWidgetValue(target, "candidate_id", candidateId);
+          setNodeWidgetValue(target, "candidate_number", ordinal);
+        }
         showReviewToast({
           severity: "success",
           summary: `Selected result #${ordinal}`,
           detail: "Queue the workflow to load its complete recipe details.",
           life: 3500,
         });
-      }
-    });
+      });
+    }
+    if (saves.length) {
+      node.addWidget("button", `Prepare save #${ordinal}`, candidateId, () => {
+        for (const target of saves) {
+          setNodeWidgetValue(target, "candidate_ids", candidateId);
+        }
+        showReviewToast({
+          severity: "success",
+          summary: `Prepared result #${ordinal} for saving`,
+          detail: "Set the concept name and quality score, then queue to save explicitly.",
+          life: 4500,
+        });
+      });
+    }
   }
 }
 
@@ -140,7 +155,7 @@ function resultWidgets(nodeClass, message) {
       `Content mode: ${data.safe_only === false ? "adult allowed" : "safe only"}`,
       `Endpoint: ${oneLine(data.api_endpoint)}`,
       "",
-      "Select a result by pasting its Candidate ID into the Review node. The Review node defaults to the first result when left blank.",
+      "Use Open image to inspect a result. Connected Review or Save nodes receive their matching action buttons below; the Save action only prepares the choice and never saves automatically.",
     ].join("\n");
     const directory = candidates.length
       ? candidates.map((candidate, index) => candidateSummary(candidate, index + 1)).join("\n\n")

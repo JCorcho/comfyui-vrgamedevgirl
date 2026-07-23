@@ -20,7 +20,7 @@ inside the **VRGDG Concept Recipe Tests** subfolder. Refresh that sidebar and
 open these files in order:
 
 1. **Search and Review** — review-only research; it cannot save anything. Turn **Safe-only search** on for SFW results or off for adult-allowed results.
-2. **Approve and Save** — paste the candidate ID you reviewed in the first workflow, choose your local score, then queue it.
+2. **Approve and Save** — click **Prepare save #** for the candidate you reviewed, choose your local score, then queue it. The button only fills the selection; it never saves automatically.
 3. **Browse Local Recipes** — lists, views, and runs Best Match without writing.
 4. **Manual Add or Edit Test Recipe** — creates a disposable `manual_test_pose_01`; queue it again after changing a field to test updates.
 5. **Delete Manual Test Recipe** — removes only that disposable manual test record.
@@ -59,7 +59,7 @@ Each node also displays its returned JSON directly in the ComfyUI node result, s
 
 1. Search for **VRGDG Concept Research: Search Civitai**. Enter a concept such as `arched_back`, select **Pony** or **Anima**, and run it. It returns a small list of review candidates; it does not save or apply anything automatically.
 2. In the Search node, click **Open image #** to inspect a photo and **Review result #** to select it in the connected **VRGDG Concept Research: View Candidate** node. You can instead enter the displayed result number (such as `2`) or a full `civitai_image_123456` ID manually. It shows the original Civitai image/post links, prompts, LoRAs, seed, sampler, CFG, steps, model, and metadata completeness.
-3. After you have reviewed it, connect the search JSON to **VRGDG Concept Research: Save Approved Candidates**. Enter the selected ID (or comma-separated IDs), choose a local `quality_score`, add your test notes, and run it.
+3. After you have reviewed it, connect the search JSON to **VRGDG Concept Research: Save Approved Candidates**. Click its connected Search node's **Prepare save #** action (or enter a selected result number such as `3`, a full ID, comma-separated selections, or `all`), choose a local `quality_score`, add your test notes, and run it.
 4. Use **VRGDG Concept Recipes: View Concept** or **Best Match** to confirm the approved recipe is now in your local library.
 
 The search defaults to safe-only public Civitai results. Turn **Safe-only

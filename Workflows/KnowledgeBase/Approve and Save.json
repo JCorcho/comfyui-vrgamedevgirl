@@ -89,7 +89,7 @@
       "flags": {},
       "order": 1,
       "mode": 0,
-      "title": "2. Paste the reviewed candidate ID, then save",
+      "title": "2. Prepare a candidate, set score, then save",
       "inputs": [
         {
           "name": "candidates_json",

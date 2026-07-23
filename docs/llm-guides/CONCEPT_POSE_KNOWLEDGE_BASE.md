@@ -98,7 +98,7 @@ All Phase 2 nodes live in **VRGDG → Knowledge → Concept Research**.
 | --- | --- |
 | `VRGDG Concept Research: Search Civitai` | Calls the external helper and outputs review-only candidate JSON. Offers Pony, Anima, Any, an optional custom base-model override, and a Safe-only search switch (on = SFW, off = adult-allowed). |
 | `VRGDG Concept Research: View Candidate` | Displays one exact candidate (full prompts, LoRAs, parameters, URLs, completeness) by its full `candidate_id` or one-based result number. A missing selection returns an instructional review result instead of throwing an execution error. |
-| `VRGDG Concept Research: Save Approved Candidates` | Explicitly saves one or more comma-separated IDs, or `all`, through `save_recipe()` into `knowledge_base/concepts/local/`. Re-saving an image updates the stable `civitai_image_<id>` recipe instead of duplicating it. |
+| `VRGDG Concept Research: Save Approved Candidates` | Explicitly saves one or more comma-separated exact IDs, one-based result numbers, or `all`, through `save_recipe()` into `knowledge_base/concepts/local/`. Re-saving an image updates the stable `civitai_image_<id>` recipe instead of duplicating it. Invalid selections return review guidance in the node instead of throwing. |
 
 The save node reuses the Phase 1 schema: `source` carries the image URL plus post ID, `notes` carries resource provenance, and `loras` remains an array of `{name, weight}`. It does not write to the Character Bible, LoRA Knowledge Base, Script-to-Film, or Music Video paths.
 
@@ -155,13 +155,15 @@ The repository tracks six GUI-format workflows under `Workflows/KnowledgeBase/`.
 The companion frontend script `web/VRGDG_ConceptResearchResults.js` renders
 the backend's review-only `ui.text` payload directly inside the three Concept
 Research nodes. Preserve this behavior when changing their return data: Search
-must show the actual `candidate_count`, a concise candidate directory, an
-**Open image #** action, and a **Review result #** action for each candidate.
-The latter must fill a connected View Candidate node with the exact full ID;
-the View node also accepts the displayed result number (for example `2`) for
-manual use. View Candidate must show the selected candidate's full recipe
-fields; Save Approved must show the local save result. The normal STRING/INT
-outputs remain the source of truth for graph wiring.
+must show the actual `candidate_count`, a concise candidate directory, and an
+**Open image #** action for each candidate. When linked to a View Candidate
+node, it must show **Review result #** actions that fill the exact full ID;
+when linked to Save Approved, it must show **Prepare save #** actions that fill
+the exact full ID without triggering a save. View and Save both accept the
+displayed result number (for example `2`) for manual use. View Candidate must
+show the selected candidate's full recipe fields; Save Approved must show the
+local save result. The normal STRING/INT outputs remain the source of truth for
+graph wiring.
 
 Do not combine the save or delete actions into the research/review canvas. That would make a routine test queue capable of mutating a user's persistent local library.
 

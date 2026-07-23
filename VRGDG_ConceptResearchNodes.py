@@ -106,6 +106,38 @@ def _select_candidate(
     return (candidates[index - 1], "candidate_number") if index <= len(candidates) else (None, "candidate_number")
 
 
+def _selected_review_candidates(candidates: list[dict[str, Any]], candidate_ids: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Resolve exact IDs or one-based result numbers without changing approval.
+
+    ``candidate_ids`` is still an explicit user-controlled approval list. This
+    only recognizes the numbered directory shown by the companion frontend so
+    a user can enter ``3`` to select the third result instead of copying its
+    long Civitai identifier.
+    """
+    wanted = _candidate_id_list(candidate_ids)
+    if "all" in wanted:
+        return list(candidates), []
+
+    by_id = {
+        _text(item.get("candidate_id", ""), 180): item
+        for item in candidates
+        if _text(item.get("candidate_id", ""), 180)
+    }
+    selected_ids: set[str] = set()
+    missing: list[str] = []
+    for selection in wanted:
+        candidate = by_id.get(selection)
+        if candidate is None and selection.isdigit():
+            index = int(selection)
+            candidate = candidates[index - 1] if 1 <= index <= len(candidates) else None
+        candidate_id = _text(candidate.get("candidate_id", ""), 180) if candidate else ""
+        if candidate_id:
+            selected_ids.add(candidate_id)
+        else:
+            missing.append(selection)
+    return [item for item in candidates if _text(item.get("candidate_id", ""), 180) in selected_ids], sorted(missing)
+
+
 def _candidate_to_recipe(candidate: dict[str, Any], quality_score: float, extra_notes: str, extra_tags: str) -> dict[str, Any]:
     candidate_id = _text(candidate.get("candidate_id", ""), 180)
     image_id = _text(candidate.get("civitai_image_id", ""), 120)
@@ -156,12 +188,9 @@ def save_approved_candidates(
     writes to the existing local Concept/Pose store.
     """
     payload = _parse_research_payload(candidates_payload)
-    wanted = _candidate_id_list(candidate_ids)
     key = _concept_key(concept_key)
     candidates = [item for item in payload["candidates"] if isinstance(item, dict)]
-    selected = candidates if "all" in wanted else [item for item in candidates if _text(item.get("candidate_id", ""), 180) in wanted]
-    found_ids = {_text(item.get("candidate_id", ""), 180) for item in selected}
-    missing = [] if "all" in wanted else sorted(wanted - found_ids)
+    selected, missing = _selected_review_candidates(candidates, candidate_ids)
     if missing:
         raise ValueError("Candidate IDs were not found in this research result: " + ", ".join(missing))
     if not selected:
@@ -309,7 +338,7 @@ class VRGDG_ConceptResearchSaveApproved:
         return {
             "required": {
                 "candidates_json": ("STRING", {"default": "{}", "multiline": True, "forceInput": True}),
-                "candidate_ids": ("STRING", {"default": "", "multiline": True, "placeholder": "Comma-separated candidate IDs, or all"}),
+                "candidate_ids": ("STRING", {"default": "", "multiline": True, "placeholder": "Exact IDs, result numbers (for example 3), or all"}),
                 "concept_key": ("STRING", {"default": "arched_back"}),
                 "display_name": ("STRING", {"default": "Arched Back"}),
                 "compatible_base_models": ("STRING", {"default": "Pony, Anima"}),
@@ -330,16 +359,32 @@ class VRGDG_ConceptResearchSaveApproved:
             }
             text = _json_output(result)
             return _text_ui_result(text, text, 0)
-        result = save_approved_candidates(
-            candidates_json,
-            candidate_ids,
-            concept_key,
-            display_name,
-            compatible_base_models,
-            quality_score,
-            review_notes,
-            additional_tags,
-        )
+        try:
+            result = save_approved_candidates(
+                candidates_json,
+                candidate_ids,
+                concept_key,
+                display_name,
+                compatible_base_models,
+                quality_score,
+                review_notes,
+                additional_tags,
+            )
+        except ValueError as exc:
+            try:
+                directory = _candidate_directory([
+                    item for item in _parse_research_payload(candidates_json).get("candidates", [])
+                    if isinstance(item, dict)
+                ])
+            except ValueError:
+                directory = []
+            result = {
+                "saved_count": 0,
+                "saved": [],
+                "candidate_directory": directory,
+                "action_required": str(exc),
+                "review_required": True,
+            }
         text = _json_output(result)
         return _text_ui_result(text, text, int(result["saved_count"]))
 

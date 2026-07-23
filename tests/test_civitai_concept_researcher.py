@@ -211,6 +211,30 @@ class CivitaiConceptResearchTests(unittest.TestCase):
         best = concept_kb.retrieve_best_recipes("arched_back", "Pony", 5, self.store_root)
         self.assertEqual(["civitai_image_101"], [item["recipe_id"] for item in best["recipes"]])
 
+    def test_save_accepts_a_displayed_result_number_and_invalid_selection_stays_in_node_ui(self):
+        payload = research_concept("arched_back", "Pony", 8, safe_only=True, client=FakeCivitaiClient())
+        original = payload["candidates"][0]
+        candidates = []
+        for image_id in (101, 202, 303):
+            candidate = __import__("copy").deepcopy(original)
+            candidate["candidate_id"] = f"civitai_image_{image_id}"
+            candidate["civitai_image_id"] = str(image_id)
+            candidates.append(candidate)
+        payload["candidates"] = candidates
+        payload["candidate_count"] = len(candidates)
+
+        saved = research_nodes.save_approved_candidates(
+            payload, "3", "arched_back", "Arched Back", "Pony", 8.0, "Selected by result number.", "test", root=self.store_root,
+        )
+        self.assertEqual("civitai_image_303", saved["saved"][0]["candidate_id"])
+
+        node = research_nodes.VRGDG_ConceptResearchSaveApproved()
+        invalid = node.save(__import__("json").dumps(payload), "9", "arched_back", "Arched Back", "Pony", 8.0, "", "test")
+        status = __import__("json").loads(invalid["result"][0])
+        self.assertEqual(0, status["saved_count"])
+        self.assertIn("not found", status["action_required"])
+        self.assertEqual("#3: civitai_image_303", status["candidate_directory"][-1])
+
     def test_save_node_template_placeholder_returns_instruction_without_writing(self):
         payload = research_concept("arched_back", "Pony", 8, safe_only=True, client=FakeCivitaiClient())
         node = research_nodes.VRGDG_ConceptResearchSaveApproved()
