@@ -8,7 +8,7 @@ The saved ComfyUI editor workflow is the source of truth:
 
 `<ComfyUI>/user/default/workflows/VioletsT2I(Anima).json`
 
-The companion custom node repository contains `comfyui-violets-integration/anima_adapter.py`. It reads that file on every request, converts the editor graph to an API prompt with the same graph converter used by Pony, finds its positive `CLIPTextEncode` node, and replaces only that node's `text` input. The selected workflow therefore retains its own Anima checkpoint, LoRAs, sampler, VAE, dimensions, and save-node behavior. The endpoints are:
+The companion custom node repository contains `comfyui-violets-integration/anima_adapter.py`. It reads that file on every request, converts the editor graph to an API prompt with the same graph converter used by Pony, finds the one active prompt encoder that reaches the sampler's `positive` conditioning input, and replaces only that node's `text` input. This supports both the standard `CLIPTextEncode` node and `CyberdeliaPromptFormatEncode` (the Positive prompt node in the current Violets Anima workflow), while leaving its negative prompt untouched. The selected workflow therefore retains its own Anima checkpoint, LoRAs, sampler, VAE, dimensions, and save-node behavior. The endpoints are:
 
 - `POST /anima_t2i/build_prompt` with `{ "prompt": "..." }`
 - `POST /anima_t2i/validate` with `{ "prompt": "..." }`
