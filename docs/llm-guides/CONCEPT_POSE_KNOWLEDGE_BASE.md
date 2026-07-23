@@ -25,7 +25,7 @@ This guide covers the local, manually curated recipe library introduced in Phase
 | `tools/civitai_concept_researcher_cli.py` | Embedded-Python-safe command-line launcher. |
 | `VRGDG_ConceptResearchNodes.py` | Three thin ComfyUI review/save nodes; no scraping logic. |
 | `tests/test_civitai_concept_researcher.py` | Mocked full-metadata extraction, review/save flow, registration, and isolation tests. |
-| `Workflows/KnowledgeBase/` | Five GUI-format, source-controlled test canvases deployed to the user's Workflows sidebar. |
+| `Workflows/KnowledgeBase/` | Five GUI-format, source-controlled test canvases deployed to the user's `Workflows/VRGDG Concept Recipe Tests/` subfolder. |
 
 The source scans `examples/` first and `local/` second. A local JSON file with the same `concept_key` deliberately overrides the example, so editing a sample never changes tracked source data. All user writes are atomic file replacements.
 
@@ -99,7 +99,7 @@ The save node reuses the Phase 1 schema: `source` carries the image URL plus pos
 
 ## GUI test-workflow deployment
 
-The repository tracks five GUI-format workflows under `Workflows/KnowledgeBase/`. Deploy identical copies to `ComfyUI/user/default/workflows/` with their date-prefixed filenames, then use `workflow_layout.auto_layout()` and `inspect()` before handoff. The canvases are intentionally split by side effect:
+The repository tracks five GUI-format workflows under `Workflows/KnowledgeBase/`. Deploy identical copies to `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/` using these exact filenames: `Search and Review.json`, `Approve and Save.json`, `Browse Local Recipes.json`, `Manual Add or Edit Test Recipe.json`, and `Delete Manual Test Recipe.json`. Use `workflow_layout.auto_layout()` and `inspect()` before handoff. The canvases are intentionally split by side effect:
 
 1. Search + review has no save node.
 2. Approval + save has a non-matching candidate-ID placeholder, so it errors harmlessly until the user explicitly pastes a reviewed ID.

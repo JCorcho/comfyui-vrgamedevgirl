@@ -4,15 +4,17 @@ This is a small local library for saving generation setups that reliably produce
 
 ## Ready-to-open test workflows
 
-Five working canvases are already installed in ComfyUI's **Workflows** sidebar. Refresh that sidebar and open the files beginning with `2026-07-22_VRGDG_ConceptResearch_` in this order:
+Five working canvases are already installed in ComfyUI's **Workflows** sidebar,
+inside the **VRGDG Concept Recipe Tests** subfolder. Refresh that sidebar and
+open these files in order:
 
-1. **01 Search and Review** — safe research only; it cannot save anything.
-2. **02 Approve and Save** — paste the candidate ID you reviewed in workflow 01, choose your local score, then queue it.
-3. **03 Browse Local Recipes** — lists, views, and runs Best Match without writing.
-4. **04 Manual Add or Edit Test Recipe** — creates a disposable `manual_test_pose_01`; queue it again after changing a field to test updates.
-5. **05 Delete Manual Test Recipe** — removes only that disposable manual test record.
+1. **Search and Review** — safe research only; it cannot save anything.
+2. **Approve and Save** — paste the candidate ID you reviewed in the first workflow, choose your local score, then queue it.
+3. **Browse Local Recipes** — lists, views, and runs Best Match without writing.
+4. **Manual Add or Edit Test Recipe** — creates a disposable `manual_test_pose_01`; queue it again after changing a field to test updates.
+5. **Delete Manual Test Recipe** — removes only that disposable manual test record.
 
-The tracked source copies live in `custom_nodes/comfyui-vrgamedevgirl/Workflows/KnowledgeBase/`. None of these canvases loads a generation model or touches the Music Video pipeline.
+The tracked source copies live in `custom_nodes/comfyui-vrgamedevgirl/Workflows/KnowledgeBase/`; the installed copies live in `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/`. None of these canvases loads a generation model or touches the Music Video pipeline.
 After workflow 05 runs, the local-only `manual_test_pose` concept is removed entirely rather than being left behind as an empty record.
 
 1. In ComfyUI, search for **VRGDG Concept Recipes: List Concepts**. Run it to see the available concepts.
