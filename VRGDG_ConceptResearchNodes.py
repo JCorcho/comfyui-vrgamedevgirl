@@ -234,6 +234,16 @@ class VRGDG_ConceptResearchSaveApproved:
         }
 
     def save(self, candidates_json, candidate_ids, concept_key, display_name, compatible_base_models, quality_score, review_notes, additional_tags):
+        placeholder = _text(candidate_ids, 4000).upper()
+        if placeholder.startswith("PASTE_CANDIDATE_ID"):
+            result = {
+                "saved_count": 0,
+                "saved": [],
+                "action_required": "Paste a reviewed candidate_id from the Search and Review workflow before saving.",
+                "review_required": True,
+            }
+            text = _json_output(result)
+            return _text_ui_result(text, text, 0)
         result = save_approved_candidates(
             candidates_json,
             candidate_ids,

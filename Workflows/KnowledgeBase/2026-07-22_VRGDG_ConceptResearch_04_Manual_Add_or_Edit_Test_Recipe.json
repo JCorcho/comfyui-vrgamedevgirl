@@ -1,0 +1,219 @@
+{
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "VRGDG_ConceptRecipeSave",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        520,
+        982
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "title": "Manual add/edit: disposable test recipe",
+      "inputs": [
+        {
+          "name": "concept_key",
+          "type": "STRING",
+          "widget": {
+            "name": "concept_key"
+          },
+          "link": null
+        },
+        {
+          "name": "display_name",
+          "type": "STRING",
+          "widget": {
+            "name": "display_name"
+          },
+          "link": null
+        },
+        {
+          "name": "compatible_base_models",
+          "type": "STRING",
+          "widget": {
+            "name": "compatible_base_models"
+          },
+          "link": null
+        },
+        {
+          "name": "source",
+          "type": "STRING",
+          "widget": {
+            "name": "source"
+          },
+          "link": null
+        },
+        {
+          "name": "positive_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "positive_prompt"
+          },
+          "link": null
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "negative_prompt"
+          },
+          "link": null
+        },
+        {
+          "name": "loras_json",
+          "type": "STRING",
+          "widget": {
+            "name": "loras_json"
+          },
+          "link": null
+        },
+        {
+          "name": "seed",
+          "type": "STRING",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "link": null
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "name": "sampler",
+          "type": "STRING",
+          "widget": {
+            "name": "sampler"
+          },
+          "link": null
+        },
+        {
+          "name": "model_name",
+          "type": "STRING",
+          "widget": {
+            "name": "model_name"
+          },
+          "link": null
+        },
+        {
+          "name": "base_model",
+          "type": "STRING",
+          "widget": {
+            "name": "base_model"
+          },
+          "link": null
+        },
+        {
+          "name": "notes",
+          "type": "STRING",
+          "widget": {
+            "name": "notes"
+          },
+          "link": null
+        },
+        {
+          "name": "quality_score",
+          "type": "FLOAT",
+          "widget": {
+            "name": "quality_score"
+          },
+          "link": null
+        },
+        {
+          "name": "tags",
+          "type": "STRING",
+          "widget": {
+            "name": "tags"
+          },
+          "link": null
+        },
+        {
+          "name": "recipe_id",
+          "type": "STRING",
+          "widget": {
+            "name": "recipe_id"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "concept_json",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "recipe_id",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VRGDG_ConceptRecipeSave"
+      },
+      "widgets_values": [
+        "manual_test_pose",
+        "Manual Test Pose",
+        "Pony, Anima",
+        "local",
+        "adult performer, balanced standing pose, full body, studio lighting",
+        "blurry, low quality, bad anatomy",
+        "[]",
+        "123456",
+        5.0,
+        20,
+        "euler",
+        "Pony test workflow",
+        "Pony",
+        "Disposable test recipe. Run this node again after changing a field to test editing.",
+        5.0,
+        "manual, test",
+        "manual_test_pose_01"
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [
+    {
+      "title": "VRGDG Knowledge Base test workflow",
+      "bounding": [
+        -5,
+        -51,
+        610,
+        1118
+      ],
+      "color": "#35516b",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}

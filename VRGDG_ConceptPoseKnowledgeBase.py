@@ -276,6 +276,21 @@ def delete_recipe(concept_key, recipe_id, root=None):
         raise ValueError(f"Recipe '{target_id}' was not found in concept '{concept['concept_key']}'.")
     concept["recipes"] = remaining
     clean_concept = _normalise_concept(concept, concept["concept_key"])
+    # A test/local-only concept should disappear completely once its final
+    # recipe is deleted.  This avoids littering the user's library with empty
+    # records, and removing a local override also correctly reveals a tracked
+    # example concept again when one exists.
+    if not clean_concept["recipes"]:
+        local_path = _local_concept_path(clean_concept["concept_key"], root)
+        if os.path.isfile(local_path):
+            os.remove(local_path)
+        visible_concept = get_concept(clean_concept["concept_key"], root)
+        return {
+            "deleted": True,
+            "concept": visible_concept or clean_concept,
+            "deleted_recipe_id": target_id,
+            "removed_empty_local_concept": True,
+        }
     _atomic_write_json(_local_concept_path(clean_concept["concept_key"], root), clean_concept)
     return {"deleted": True, "concept": clean_concept, "deleted_recipe_id": target_id}
 

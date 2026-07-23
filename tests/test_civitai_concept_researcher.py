@@ -167,6 +167,19 @@ class CivitaiConceptResearchTests(unittest.TestCase):
         best = concept_kb.retrieve_best_recipes("arched_back", "Pony", 5, self.store_root)
         self.assertEqual(["civitai_image_101"], [item["recipe_id"] for item in best["recipes"]])
 
+    def test_save_node_template_placeholder_returns_instruction_without_writing(self):
+        payload = research_concept("arched_back", "Pony", 8, safe_only=True, client=FakeCivitaiClient())
+        node = research_nodes.VRGDG_ConceptResearchSaveApproved()
+        result = node.save(
+            __import__("json").dumps(payload),
+            "PASTE_CANDIDATE_ID_FROM_WORKFLOW_01",
+            "arched_back", "Arched Back", "Pony, Anima", 0.0, "", "civitai, reviewed",
+        )
+        message = __import__("json").loads(result["result"][0])
+        self.assertEqual(0, message["saved_count"])
+        self.assertTrue(message["review_required"])
+        self.assertIn("Paste a reviewed candidate_id", message["action_required"])
+
     def test_node_registration_and_isolation_boundaries(self):
         expected_nodes = {
             "VRGDG_ConceptResearchCivitai",

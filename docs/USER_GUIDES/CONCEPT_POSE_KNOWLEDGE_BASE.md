@@ -2,6 +2,19 @@
 
 This is a small local library for saving generation setups that reliably produce a pose, body mechanic, camera angle, or other reusable concept. It does not alter your Character Bible, LoRA metadata, Music Video projects, or renders by itself.
 
+## Ready-to-open test workflows
+
+Five working canvases are already installed in ComfyUI's **Workflows** sidebar. Refresh that sidebar and open the files beginning with `2026-07-22_VRGDG_ConceptResearch_` in this order:
+
+1. **01 Search and Review** — safe research only; it cannot save anything.
+2. **02 Approve and Save** — paste the candidate ID you reviewed in workflow 01, choose your local score, then queue it.
+3. **03 Browse Local Recipes** — lists, views, and runs Best Match without writing.
+4. **04 Manual Add or Edit Test Recipe** — creates a disposable `manual_test_pose_01`; queue it again after changing a field to test updates.
+5. **05 Delete Manual Test Recipe** — removes only that disposable manual test record.
+
+The tracked source copies live in `custom_nodes/comfyui-vrgamedevgirl/Workflows/KnowledgeBase/`. None of these canvases loads a generation model or touches the Music Video pipeline.
+After workflow 05 runs, the local-only `manual_test_pose` concept is removed entirely rather than being left behind as an empty record.
+
 1. In ComfyUI, search for **VRGDG Concept Recipes: List Concepts**. Run it to see the available concepts.
 2. Connect **View Concept** and enter a key such as `arched_back` to inspect its recipes.
 3. To save your own, use **Save Recipe**. Enter the concept key, model family, full positive/negative prompts, LoRAs as JSON, seed, sampler settings, notes, and a `quality_score` from 0–10.

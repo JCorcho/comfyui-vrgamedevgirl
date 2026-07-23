@@ -1,0 +1,84 @@
+{
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "VRGDG_ConceptRecipeDelete",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        440,
+        172
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "title": "Cleanup: delete only the disposable manual test recipe",
+      "inputs": [
+        {
+          "name": "concept_key",
+          "type": "STRING",
+          "widget": {
+            "name": "concept_key"
+          },
+          "link": null
+        },
+        {
+          "name": "recipe_id",
+          "type": "STRING",
+          "widget": {
+            "name": "recipe_id"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "concept_json",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "recipe_count",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VRGDG_ConceptRecipeDelete"
+      },
+      "widgets_values": [
+        "manual_test_pose",
+        "manual_test_pose_01"
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [
+    {
+      "title": "VRGDG Knowledge Base test workflow",
+      "bounding": [
+        -5,
+        -51,
+        530,
+        308
+      ],
+      "color": "#35516b",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}

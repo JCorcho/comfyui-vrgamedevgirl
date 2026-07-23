@@ -25,6 +25,7 @@ This guide covers the local, manually curated recipe library introduced in Phase
 | `tools/civitai_concept_researcher_cli.py` | Embedded-Python-safe command-line launcher. |
 | `VRGDG_ConceptResearchNodes.py` | Three thin ComfyUI review/save nodes; no scraping logic. |
 | `tests/test_civitai_concept_researcher.py` | Mocked full-metadata extraction, review/save flow, registration, and isolation tests. |
+| `Workflows/KnowledgeBase/` | Five GUI-format, source-controlled test canvases deployed to the user's Workflows sidebar. |
 
 The source scans `examples/` first and `local/` second. A local JSON file with the same `concept_key` deliberately overrides the example, so editing a sample never changes tracked source data. All user writes are atomic file replacements.
 
@@ -95,6 +96,18 @@ All Phase 2 nodes live in **VRGDG → Knowledge → Concept Research**.
 | `VRGDG Concept Research: Save Approved Candidates` | Explicitly saves one or more comma-separated IDs, or `all`, through `save_recipe()` into `knowledge_base/concepts/local/`. Re-saving an image updates the stable `civitai_image_<id>` recipe instead of duplicating it. |
 
 The save node reuses the Phase 1 schema: `source` carries the image URL plus post ID, `notes` carries resource provenance, and `loras` remains an array of `{name, weight}`. It does not write to the Character Bible, LoRA Knowledge Base, Script-to-Film, or Music Video paths.
+
+## GUI test-workflow deployment
+
+The repository tracks five GUI-format workflows under `Workflows/KnowledgeBase/`. Deploy identical copies to `ComfyUI/user/default/workflows/` with their date-prefixed filenames, then use `workflow_layout.auto_layout()` and `inspect()` before handoff. The canvases are intentionally split by side effect:
+
+1. Search + review has no save node.
+2. Approval + save has a non-matching candidate-ID placeholder, so it errors harmlessly until the user explicitly pastes a reviewed ID.
+3. Browsing runs List, View, and Best Match only.
+4. Manual Add/Edit writes only a clearly named disposable record, `manual_test_pose_01`.
+5. Delete removes only that disposable record.
+
+Do not combine the save or delete actions into the research/review canvas. That would make a routine test queue capable of mutating a user's persistent local library.
 
 ## Reproduction steps
 

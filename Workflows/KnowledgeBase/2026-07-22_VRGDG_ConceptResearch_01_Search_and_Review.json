@@ -1,0 +1,162 @@
+{
+  "last_node_id": 2,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "VRGDG_ConceptResearchCivitai",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        420,
+        280
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "title": "1. Search safe Civitai candidates",
+      "inputs": [
+        {
+          "name": "concept_query",
+          "type": "STRING",
+          "widget": {
+            "name": "concept_query"
+          },
+          "link": null
+        },
+        {
+          "name": "base_model",
+          "type": "COMBO",
+          "widget": {
+            "name": "base_model"
+          },
+          "link": null
+        },
+        {
+          "name": "max_candidates",
+          "type": "INT",
+          "widget": {
+            "name": "max_candidates"
+          },
+          "link": null
+        },
+        {
+          "name": "safe_only",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "safe_only"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "candidates_json",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "candidate_count",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VRGDG_ConceptResearchCivitai"
+      },
+      "widgets_values": [
+        "arched_back",
+        "Pony",
+        2,
+        true
+      ]
+    },
+    {
+      "id": 2,
+      "type": "VRGDG_ConceptResearchViewCandidate",
+      "pos": [
+        580,
+        95
+      ],
+      "size": [
+        420,
+        170
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "title": "2. Review the first candidate",
+      "inputs": [
+        {
+          "name": "candidates_json",
+          "type": "STRING",
+          "link": 1
+        },
+        {
+          "name": "candidate_id",
+          "type": "STRING",
+          "widget": {
+            "name": "candidate_id"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "candidate_json",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "candidate_id",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VRGDG_ConceptResearchViewCandidate"
+      },
+      "widgets_values": [
+        ""
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [
+    {
+      "title": "VRGDG Knowledge Base test workflow",
+      "bounding": [
+        -5,
+        -51,
+        1050,
+        416
+      ],
+      "color": "#35516b",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}

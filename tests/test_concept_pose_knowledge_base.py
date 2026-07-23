@@ -70,6 +70,18 @@ class ConceptPoseKnowledgeBaseTests(unittest.TestCase):
         self.assertEqual(2, len(deleted["concept"]["recipes"]))
         self.assertEqual("added", second["action"])
 
+    def test_deleting_final_local_only_recipe_removes_the_empty_concept_file(self):
+        created = concept_kb.save_recipe(
+            "disposable_manual_test", "Disposable Manual Test", ["Pony"],
+            self.recipe("disposable_recipe", "Pony", 5.0, "999"), self.store_root,
+        )
+        removed = concept_kb.delete_recipe(
+            "disposable_manual_test", created["recipe"]["recipe_id"], self.store_root
+        )
+        self.assertTrue(removed["removed_empty_local_concept"])
+        self.assertIsNone(concept_kb.get_concept("disposable_manual_test", self.store_root))
+        self.assertFalse(os.path.isfile(os.path.join(self.store_root, "local", "disposable_manual_test.json")))
+
     def test_tracked_examples_and_node_registration_are_available(self):
         examples = concept_kb.list_concepts()
         keys = {item["concept_key"] for item in examples}
