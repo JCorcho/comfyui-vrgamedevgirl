@@ -18,3 +18,20 @@ custom_nodes/comfyui-vrgamedevgirl/knowledge_base/concepts/local/
 The included `arched_back` and `low_crouch` files are examples. Editing either through a node creates a personal local override, so the original sample remains intact. Phase 1 does not research Civitai or automatically apply a recipe to a scene; those are planned for later phases.
 
 Each node also displays its returned JSON directly in the ComfyUI node result, so it can be inspected without adding a separate text-preview node.
+
+## Research a Civitai recipe, then approve it
+
+1. Search for **VRGDG Concept Research: Search Civitai**. Enter a concept such as `arched_back`, select **Pony** or **Anima**, and run it. It returns a small list of review candidates; it does not save or apply anything automatically.
+2. Copy the `candidate_id` you want to inspect, such as `civitai_image_123456`, into **VRGDG Concept Research: View Candidate**. It shows the original Civitai image/post links, prompts, LoRAs, seed, sampler, CFG, steps, model, and metadata completeness.
+3. After you have reviewed it, connect the search JSON to **VRGDG Concept Research: Save Approved Candidates**. Enter the selected ID (or comma-separated IDs), choose a local `quality_score`, add your test notes, and run it.
+4. Use **VRGDG Concept Recipes: View Concept** or **Best Match** to confirm the approved recipe is now in your local library.
+
+The search defaults to safe-only public Civitai results. It relies on Civitai's labels, so still review every candidate before using it. The local library stores only the candidates you explicitly save. Saving the same Civitai image again updates that recipe instead of creating a duplicate.
+
+If you prefer the terminal, run:
+
+```powershell
+& C:\AI\ComfyUI\ComfyUI-Easy-Install\ComfyUI-Easy-Install\python_embeded\python.exe .\tools\civitai_concept_researcher_cli.py --concept "arched back" --base-model Pony --limit 5
+```
+
+No login is needed for public metadata. If Civitai later requires one for your account, set `CIVITAI_API_TOKEN` in the environment that launches ComfyUI—do not paste it into a node, workflow, or project file.

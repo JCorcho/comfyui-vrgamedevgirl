@@ -27,6 +27,7 @@ _VRGDG_SUBMODULES = (
     ".VRGDG_WorkflowRunnerNodes",
     ".VRGDG_ScriptToFilmNodes",
     ".VRGDG_ConceptPoseKnowledgeBase",
+    ".VRGDG_ConceptResearchNodes",
     ".VRGDG_MusicVideoBuilderNodes",
     ".VRGDG_StoryboardBuilderNodes",
     ".VRGDG_MusicVideoPromptCreatorNodes",
