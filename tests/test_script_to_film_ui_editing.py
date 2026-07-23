@@ -38,6 +38,14 @@ class ScriptToFilmUiEditingTests(unittest.TestCase):
         self.assertIn('onSceneComplete:', source)
         self.assertIn('Film scene ${sceneNumber || ""} is rendered and visible in this Planner.', source)
 
+    def test_completed_clip_is_persisted_before_the_next_film_scene(self):
+        builder_path = os.path.join(ROOT, "web", "VRGDG_MusicVideoBuilderUI.js")
+        with open(builder_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        self.assertIn('"/vrgdg/script_to_film/save_plan"', source)
+        self.assertIn('if (Array.isArray(savedPlan?.scenes)) mergeScriptToFilmTimeline(savedPlan.scenes);', source)
+
 
 if __name__ == "__main__":
     unittest.main()

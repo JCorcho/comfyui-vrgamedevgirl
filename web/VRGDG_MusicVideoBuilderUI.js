@@ -33375,6 +33375,15 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     segment.video_cache_bust = Date.now();
     syncPreview(segment);
     render();
+    const savedPlan = await postJson("/vrgdg/script_to_film/save_plan", {
+      project_folder: payload.project_folder,
+      fps,
+      scenes: state.segments,
+      keyframe_model: keyframeModel,
+      lora_knowledge_loras: state.scriptToFilm?.lora_knowledge_loras || [],
+      style_profile_path: state.scriptToFilm?.style_profile_path || "",
+    }, 60000);
+    if (Array.isArray(savedPlan?.scenes)) mergeScriptToFilmTimeline(savedPlan.scenes);
     await autoSaveSessionQuiet(`Film scene ${sceneNumber} native-audio render complete`);
     try {
       await options.onSceneComplete?.({ scene_id: segment.id, scene_number: sceneNumber, video_path: finalVideoPath });
