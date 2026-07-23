@@ -1,13 +1,14 @@
-# Concept / Pose Knowledge Base — Phase 1
+# Concept / Pose Knowledge Base — Phases 1–3
 
-This guide covers the local, manually curated recipe library introduced in Phase 1 and its human-reviewed Civitai research intake added in Phase 2. It is a standalone store for reproducible pose, body-mechanics, camera-angle, and concept recipes. It is not a Character Bible, LoRA metadata store, prompt generator, or Music Video feature.
+This guide covers the local, manually curated recipe library introduced in Phase 1, its human-reviewed Civitai research intake added in Phase 2, and the Script-to-Film-only generation-time suggestions added in Phase 3. It is a standalone store for reproducible pose, body-mechanics, camera-angle, and concept recipes. It is not a Character Bible, LoRA metadata store, prompt generator, or Music Video feature.
 
 ## Scope boundary
 
 - **Character Bible** stays identity and visual-continuity only.
 - **LoRA Knowledge Base** stays LoRA-specific technical metadata only.
 - **Concept / Pose Knowledge Base** stores complete model-generation recipes for a reusable concept.
-- **Music Video** is untouched. Do not import this module into `VRGDG_MusicVideoBuilderNodes.py`, `VRGDG_WorkflowRunnerNodes.py`, or either Music Video UI in Phase 1.
+- **Music Video** is untouched. Do not import the Concept/Pose store into `VRGDG_MusicVideoBuilderNodes.py` or `VRGDG_WorkflowRunnerNodes.py`.
+- **Phase 3 exception:** `VRGDG_ScriptToFilmConceptIntelligence.py` may be called only by `VRGDG_ScriptToFilmNodes.py` and the shared `VRGDG_ScriptToFilmUI.js` planner. `VRGDG_MusicVideoBuilderUI.js` may pass the Film-only `keyframe_model` into its existing `isScriptToFilmMode()` branch because Builder and Wizard open that same planner. Do not call this code from a Music Video render, prompt, or timeline path.
 - The Phase 2 Civitai client remains outside ComfyUI nodes under `tools/civitai_concept_researcher/`. Nodes must not acquire network/scraping logic.
 - Civitai candidates are review-only. Never auto-save, auto-apply, or promote their `candidate_score` to a local `quality_score`; only an explicit user selection writes a local recipe.
 - Browser automation is not used for Phase 2. Do not add cookies, browser profiles, or credentials to the repository merely to research public Civitai metadata.
@@ -25,7 +26,11 @@ This guide covers the local, manually curated recipe library introduced in Phase
 | `tools/civitai_concept_researcher_cli.py` | Embedded-Python-safe command-line launcher. |
 | `VRGDG_ConceptResearchNodes.py` | Three thin ComfyUI review/save nodes; no scraping logic. |
 | `tests/test_civitai_concept_researcher.py` | Mocked full-metadata extraction, review/save flow, registration, and isolation tests. |
-| `Workflows/KnowledgeBase/` | Five GUI-format, source-controlled test canvases deployed to the user's `Workflows/VRGDG Concept Recipe Tests/` subfolder. |
+| `Workflows/KnowledgeBase/` | Six GUI-format, source-controlled test canvases deployed to the user's `Workflows/VRGDG Concept Recipe Tests/` subfolder. |
+| `VRGDG_ScriptToFilmConceptIntelligence.py` | Phase 3 deterministic local matching, compact suggestion data, recipe application, Phase 2 research delegation, and three thin canvas nodes. |
+| `VRGDG_ScriptToFilmNodes.py` | Film-only HTTP routes under `/vrgdg/script_to_film/concept_intelligence/`; it normalizes the applied recipe metadata so it persists in a Film plan. |
+| `web/VRGDG_ScriptToFilmUI.js` | Shared Builder/Wizard Film Planner UI: base-model choice, scene suggestions, Apply, research review, and explicit save. |
+| `tests/test_script_to_film_concept_intelligence.py` | Temporary-store suggestions, Pony/Anima filtering, application, research delegation, and scope-registration tests. |
 
 The source scans `examples/` first and `local/` second. A local JSON file with the same `concept_key` deliberately overrides the example, so editing a sample never changes tracked source data. All user writes are atomic file replacements.
 
@@ -97,15 +102,55 @@ All Phase 2 nodes live in **VRGDG → Knowledge → Concept Research**.
 
 The save node reuses the Phase 1 schema: `source` carries the image URL plus post ID, `notes` carries resource provenance, and `loras` remains an array of `{name, weight}`. It does not write to the Character Bible, LoRA Knowledge Base, Script-to-Film, or Music Video paths.
 
+## Phase 3: Script-to-Film generation-time intelligence
+
+Phase 3 does not change the Concept/Pose JSON schema. It reads the same Phase 1 `retrieve_best_recipes()` result and calls the same Phase 2 `research_concept()` / `save_approved_candidates()` functions. It adds no network logic to a ComfyUI node.
+
+### Scene matching and suggestions
+
+`infer_scene_concept(scene)` first uses an explicit `concept_key` (the Film Planner's **Concept / pose** field). If it is blank, it deterministically matches existing local concept keys against the scene label, script beat, physical-state progression, position-continuity notes, and keyframe/LTX prompts. It does not invoke an LLM. `suggest_scene_recipes(scene, base_model, limit)` then delegates ranking and filtering to Phase 1 `retrieve_best_recipes()`.
+
+The result cards deliberately show only what is useful at edit time: quality score, seed, CFG, steps, sampler, LoRAs, and a short positive-prompt preview. The full recipe remains in the local store and can still be viewed with Phase 1 nodes.
+
+The Film project's `script_to_film.keyframe_model` is `pony` or `anima` (default `pony`). It is a Script-to-Film-only selection. The shared Film Planner owns it; Builder and Wizard both open that same modal. The Builder's Film render branch uses it to call the matching existing Violets T2I adapter for a missing keyframe. Do not replace the global Music Video `image_model_mode` with this value.
+
+### Applying a recipe safely
+
+`apply_recipe_to_scene()` appends the full local positive prompt as a fragment to `scene.t2i_prompt` / `scene.keyframe_prompt`. It also stores the selected recipe's negative prompt, LoRAs, seed, CFG, steps, sampler, source, and ID under these Film-scene-only fields:
+
+```text
+concept_key
+concept_recipe_positive_fragment
+concept_recipe_negative_fragment
+concept_recipe_loras
+concept_recipe_settings
+applied_concept_recipe
+```
+
+The fields are metadata transfer, not a silent mutation of a saved T2I workflow. The Pony/Anima adapters inject only the positive scene prompt and intentionally preserve each workflow's negative conditioning, sampler, checkpoint, LoRA stack, and save behavior. Never copy a recipe LoRA into `lora_knowledge_refs` automatically: those are a separate technical store and require deliberate local mapping. Never copy recipe text or triggers into `character_bible`.
+
+### Research-more flow
+
+The Film Planner's **Research more for this concept** calls the Phase 2 helper with the inferred/explicit concept and selected Pony/Anima base model. It returns candidates only. The planner displays the same review data (prompt, settings, LoRAs) with checkboxes; `save_researched_scene_recipes()` delegates only checked IDs to Phase 2 `save_approved_candidates()`. After a successful explicit save, the planner invalidates its scene suggestion cache and re-queries the local store. No candidate can be auto-saved or applied.
+
+Canvas nodes live in **VRGDG → Knowledge → Script-to-Film Concept Intelligence**:
+
+| Node | Role |
+| --- | --- |
+| `VRGDG Film Concepts: Suggest Local Recipes` | Returns compact Phase 1 Best Match suggestions for one scene JSON record. |
+| `VRGDG Film Concepts: Apply Recipe to Scene` | Returns a new scene JSON record with an explicitly selected recipe's transferred metadata. |
+| `VRGDG Film Concepts: Research More (Review First)` | Delegates a review-only Civitai search to the Phase 2 helper. Feed its result to Phase 2 **Save Approved Candidates** after human review. |
+
 ## GUI test-workflow deployment
 
-The repository tracks five GUI-format workflows under `Workflows/KnowledgeBase/`. Deploy identical copies to `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/` using these exact filenames: `Search and Review.json`, `Approve and Save.json`, `Browse Local Recipes.json`, `Manual Add or Edit Test Recipe.json`, and `Delete Manual Test Recipe.json`. Use `workflow_layout.auto_layout()` and `inspect()` before handoff. The canvases are intentionally split by side effect:
+The repository tracks six GUI-format workflows under `Workflows/KnowledgeBase/`. Deploy identical copies to `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/` using these exact filenames: `Search and Review.json`, `Approve and Save.json`, `Browse Local Recipes.json`, `Manual Add or Edit Test Recipe.json`, `Delete Manual Test Recipe.json`, and `Script-to-Film Concept Intelligence.json`. Use `workflow_layout.auto_layout()` and `inspect()` before handoff. The canvases are intentionally split by side effect:
 
 1. Search + review has no save node.
 2. Approval + save has a non-matching candidate-ID placeholder, so it errors harmlessly until the user explicitly pastes a reviewed ID.
 3. Browsing runs List, View, and Best Match only.
 4. Manual Add/Edit writes only a clearly named disposable record, `manual_test_pose_01`.
 5. Delete removes only that disposable record.
+6. Script-to-Film Concept Intelligence is a review/apply/research test canvas; its Research More node is review-only and cannot write to the local library.
 
 The companion frontend script `web/VRGDG_ConceptResearchResults.js` renders
 the backend's review-only `ui.text` payload directly inside the three Concept
@@ -152,3 +197,21 @@ After restarting ComfyUI, search the node menu for `VRGDG Concept Recipes`. Run 
 & C:\AI\ComfyUI\ComfyUI-Easy-Install\ComfyUI-Easy-Install\python_embeded\python.exe .\custom_nodes\comfyui-vrgamedevgirl\tests\test_concept_pose_knowledge_base.py -v
 & C:\AI\ComfyUI\ComfyUI-Easy-Install\ComfyUI-Easy-Install\python_embeded\python.exe .\custom_nodes\comfyui-vrgamedevgirl\tools\civitai_concept_researcher_cli.py --concept "arched back" --base-model Pony --limit 1
 ```
+
+## Reproducing Phase 3
+
+1. Add `VRGDG_ScriptToFilmConceptIntelligence` to `_VRGDG_SUBMODULES` immediately after `VRGDG_ScriptToFilmNodes`. The Film routes may import the helper during startup, so preserve its direct-import fallback.
+2. Keep deterministic concept inference, compact-card formatting, and apply logic in `VRGDG_ScriptToFilmConceptIntelligence.py`. It may import only Phase 1/2 public helpers; it must not import Music Video, Character Bible, or LoRA Knowledge Base modules.
+3. Add Film-only routes in `VRGDG_ScriptToFilmNodes.py`: `suggest`, `apply`, `research`, and `save_research` under `/vrgdg/script_to_film/concept_intelligence/`. All Civitai saves must delegate to `save_approved_candidates()`.
+4. Preserve the six applied-recipe fields in `_normalize_scene()` so a reflow/save/reopen does not erase an approved recipe transfer.
+5. Extend only `web/VRGDG_ScriptToFilmUI.js` for Film Planner controls. The Builder and Wizard must both use that same modal. If the Film render branch accepts a new keyframe-model field, keep it inside `isScriptToFilmMode()` and never change Music Video image-mode behavior.
+6. Deploy `Workflows/KnowledgeBase/Script-to-Film Concept Intelligence.json` to `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/` and use `workflow_layout.py` inspection before handoff.
+
+### Validation
+
+```powershell
+& C:\AI\ComfyUI\ComfyUI-Easy-Install\ComfyUI-Easy-Install\python_embeded\python.exe .\custom_nodes\comfyui-vrgamedevgirl\tests\test_script_to_film_concept_intelligence.py -v
+& C:\AI\ComfyUI\ComfyUI-Easy-Install\ComfyUI-Easy-Install\python_embeded\python.exe -m py_compile .\custom_nodes\comfyui-vrgamedevgirl\VRGDG_ScriptToFilmConceptIntelligence.py .\custom_nodes\comfyui-vrgamedevgirl\VRGDG_ScriptToFilmNodes.py
+```
+
+After restarting ComfyUI, confirm the three `VRGDG Film Concepts` node types appear in `/object_info`. Run the installed test workflow's suggestion and apply nodes, then verify the result scene JSON has the six applied fields while its Character Bible is unchanged. In the Film Planner, select Pony and Anima in turn and verify the local cards are filtered to the selected family. Use **Research more** only with a non-sensitive test concept, explicitly check a returned candidate, save it, and confirm the refreshed Film-scene suggestions include it. Finally switch to Music Video and verify no Concept/Pose controls or render behavior appear there.

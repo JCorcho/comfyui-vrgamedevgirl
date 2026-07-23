@@ -11,7 +11,7 @@ import {
   storyboardPerformancePreset,
 } from "./VRGDG_StoryboardBuilderUI.js";
 import { openMusicVideoWizard } from "./VRGDG_MusicVideoWizardUI.js?v=20260722-ltx-memory";
-import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-civitai-triggers";
+import { openScriptToFilmPlanner } from "./VRGDG_ScriptToFilmUI.js?v=20260722-concept-intelligence";
 import { createMusicVideoBuilderLuts } from "./VRGDG_MusicVideoBuilderLUTs.js";
 import { createPostProcessComparePreview } from "./VRGDG_PostProcessComparePreview.js";
 import { createFaceFixTool } from "./VRGDG_FaceFixUI.js?v=20260716-1";
@@ -33198,6 +33198,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         fps: scriptToFilmFps(),
         default_target_duration_seconds: Math.max(0.1, Number(state.scriptToFilm?.default_target_duration_seconds || 4)),
         ...(state.scriptToFilm || {}),
+        keyframe_model: String(state.scriptToFilm?.keyframe_model || "pony").trim().toLowerCase() === "anima" ? "anima" : "pony",
       };
     }
     syncProjectModeControl();
@@ -33270,16 +33271,18 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     }, 30000);
     if (resolved?.scene && typeof resolved.scene === "object") Object.assign(segment, resolved.scene);
     const useReference = String(segment.film_render_mode || "i2v_t2av").toLowerCase() !== "t2av";
+    const keyframeModel = String(state.scriptToFilm?.keyframe_model || "pony").trim().toLowerCase() === "anima" ? "anima" : "pony";
+    const keyframeModelLabel = keyframeModel === "anima" ? "Anima" : "Pony";
     const unifiedPrompt = String(segment.unified_ltx_prompt || segment.i2v_prompt || "").trim();
     if (!unifiedPrompt) throw new Error(`${label}: Script-to-Film needs a unified LTX visual + audio prompt.`);
     if (useReference && !String(segment.character_reference_path || selectedSegmentImagePath(segment) || "").trim()) {
-      const ponyPrompt = String(segment.t2i_prompt || "").trim();
-      if (!ponyPrompt) throw new Error(`${label}: add a Pony keyframe prompt or a character/keyframe image path.`);
-      progress?.set(`Film ${label}: generating Pony keyframe…`, pct(8));
-      await createImageForSegmentInCurrentMode(segment, "pony", progress, pct(10), Math.max(1, span * .30), `Film keyframe ${label}`);
+      const keyframePrompt = String(segment.t2i_prompt || "").trim();
+      if (!keyframePrompt) throw new Error(`${label}: add a ${keyframeModelLabel} keyframe prompt or a character/keyframe image path.`);
+      progress?.set(`Film ${label}: generating ${keyframeModelLabel} keyframe…`, pct(8));
+      await createImageForSegmentInCurrentMode(segment, keyframeModel, progress, pct(10), Math.max(1, span * .30), `Film keyframe ${label}`);
     }
     const referenceImage = String(segment.character_reference_path || selectedSegmentImagePath(segment) || "").trim();
-    if (useReference && !referenceImage) throw new Error(`${label}: Pony did not produce a usable reference image.`);
+    if (useReference && !referenceImage) throw new Error(`${label}: ${keyframeModelLabel} did not produce a usable reference image.`);
     const targetSeconds = Math.max(.1, Number(segment.target_duration_seconds || 4));
     const plannedFrames = Math.max(9, Math.round(((Math.round(targetSeconds * fps) + 1) - 1) / 8) * 8 + 1);
     segment.planned_frames = plannedFrames;

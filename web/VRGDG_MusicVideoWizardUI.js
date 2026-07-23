@@ -1577,6 +1577,7 @@ export function openMusicVideoWizard(api = {}) {
 
   function renderScriptToFilmStep(data, stepId) {
     const title = stepId === "audio" ? "Film Script" : "Duration-first Film Scenes";
+    const keyframeModel = String(data.scriptToFilm?.keyframe_model || "pony").toLowerCase() === "anima" ? "Anima" : "Pony";
     const card = el("div", "vrgdg-wizard-info-note");
     card.style.display = "grid";
     card.style.gap = "12px";
@@ -1584,8 +1585,8 @@ export function openMusicVideoWizard(api = {}) {
       el("div", "vrgdg-wizard-settings-title", title),
       el("div", "", stepId === "audio"
         ? "Script-to-Film does not load a source song, SRT, or lyric timing. Paste the script in the Film Planner, then the selected Prompt Creator model produces duration-snapped shot records."
-        : "Each Film shot carries its own Pony keyframe prompt, natural-language LTX visual-and-audio prompt, character bible, physical continuity, action intensity, camera language, sound design, optional music bed, and transition ambience notes."),
-      el("div", "vrgdg-wizard-note", `Shared Film profile: Film/T2AV + Character Ref · Pony keyframes · Violets LTX 2.3 FP8 · selected LTX audio text encoder · DMD 1.0 · JoyAI 0.5.\nPlanned frames obey (frames − 1) % 8 = 0. Rendered duration reflows following scenes.`),
+        : `Each Film shot carries its own ${keyframeModel} keyframe prompt, natural-language LTX visual-and-audio prompt, character bible, physical continuity, action intensity, camera language, sound design, optional music bed, transition ambience notes, and local Concept / Pose recipe suggestions.`),
+      el("div", "vrgdg-wizard-note", `Shared Film profile: Film/T2AV + Character Ref · ${keyframeModel} keyframes · Violets LTX 2.3 FP8 · selected LTX audio text encoder · DMD 1.0 · JoyAI 0.5.\nUse Open Film Planner to change the keyframe model, view/apply local recipes, or Research more for a scene concept. Planned frames obey (frames − 1) % 8 = 0. Rendered duration reflows following scenes.`),
     );
     const actions = el("div", "vrgdg-wizard-settings-actions");
     const planner = button(stepId === "audio" ? "Paste Script / Create Plan" : "Edit Film Scene Records", "primary");

@@ -1,0 +1,92 @@
+{
+  "last_node_id": 3,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "VRGDG_ScriptToFilmRecipeSuggestions",
+      "pos": [40, 40],
+      "size": [460, 250],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "title": "1. Suggest local recipes for a Film scene",
+      "inputs": [
+        {"name": "scene_json", "type": "STRING", "widget": {"name": "scene_json"}, "link": null},
+        {"name": "base_model", "type": "COMBO", "widget": {"name": "base_model"}, "link": null},
+        {"name": "limit", "type": "INT", "widget": {"name": "limit"}, "link": null}
+      ],
+      "outputs": [
+        {"name": "suggestions_json", "type": "STRING", "links": null},
+        {"name": "suggestion_count", "type": "INT", "links": null}
+      ],
+      "properties": {"Node name for S&R": "VRGDG_ScriptToFilmRecipeSuggestions"},
+      "widgets_values": [
+        "{\n  \"id\": \"film_scene_0001\",\n  \"label\": \"Courier takes a low crouch behind a rooftop barrier\",\n  \"physical_state_progression\": \"Drops into a low crouch and steadies both feet\",\n  \"t2i_prompt\": \"adult courier on a rain-soaked rooftop\"\n}",
+        "Pony",
+        3
+      ]
+    },
+    {
+      "id": 2,
+      "type": "VRGDG_ScriptToFilmApplyRecipe",
+      "pos": [560, 40],
+      "size": [460, 300],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "title": "2. Apply one reviewed local recipe to a Film scene",
+      "inputs": [
+        {"name": "scene_json", "type": "STRING", "widget": {"name": "scene_json"}, "link": null},
+        {"name": "concept_key", "type": "STRING", "widget": {"name": "concept_key"}, "link": null},
+        {"name": "recipe_id", "type": "STRING", "widget": {"name": "recipe_id"}, "link": null},
+        {"name": "base_model", "type": "COMBO", "widget": {"name": "base_model"}, "link": null}
+      ],
+      "outputs": [
+        {"name": "scene_json", "type": "STRING", "links": null},
+        {"name": "applied_recipe_id", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "VRGDG_ScriptToFilmApplyRecipe"},
+      "widgets_values": [
+        "{\n  \"id\": \"film_scene_0001\",\n  \"concept_key\": \"low_crouch\",\n  \"t2i_prompt\": \"adult courier on a rain-soaked rooftop\",\n  \"character_bible\": {\"summary\": \"Identity-only text remains unchanged\"}\n}",
+        "low_crouch",
+        "low_crouch_pony_rooftop_01",
+        "Pony"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "VRGDG_ScriptToFilmResearchMore",
+      "pos": [40, 390],
+      "size": [460, 230],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "title": "3. Research more candidates (review only)",
+      "inputs": [
+        {"name": "concept_query", "type": "STRING", "widget": {"name": "concept_query"}, "link": null},
+        {"name": "base_model", "type": "COMBO", "widget": {"name": "base_model"}, "link": null},
+        {"name": "max_candidates", "type": "INT", "widget": {"name": "max_candidates"}, "link": null},
+        {"name": "safe_only", "type": "BOOLEAN", "widget": {"name": "safe_only"}, "link": null}
+      ],
+      "outputs": [
+        {"name": "candidates_json", "type": "STRING", "links": null},
+        {"name": "candidate_count", "type": "INT", "links": null}
+      ],
+      "properties": {"Node name for S&R": "VRGDG_ScriptToFilmResearchMore"},
+      "widgets_values": ["low crouch", "Pony", 2, true]
+    }
+  ],
+  "links": [],
+  "groups": [
+    {
+      "title": "Script-to-Film Concept Intelligence — review and apply",
+      "bounding": [-10, -50, 1060, 720],
+      "color": "#35516b",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {"ds": {"scale": 1, "offset": [0, 0]}},
+  "version": 0.4
+}

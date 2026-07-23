@@ -35,6 +35,12 @@ from .VRGDG_LoraKnowledgeBase import (
     upsert_entry,
 )
 from .VRGDG_MusicVideoPromptCreatorNodes import _extract_json_object, _run_text_gemma_custom
+from .VRGDG_ScriptToFilmConceptIntelligence import (
+    apply_recipe_to_scene,
+    research_more_for_scene,
+    save_researched_scene_recipes,
+    suggest_scene_recipes,
+)
 from .VRGDG_WorkflowRunnerNodes import (
     _DEFAULT_I2V_PASS1_SIGMAS,
     _DEFAULT_I2V_PASS2_SIGMAS,
@@ -69,6 +75,7 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 _FILM_PLACEHOLDER_IMAGE_NAME = "vrgdg_script_to_film_placeholder.png"
 _SCRIPT_PROMPT_JOBS = {}
 _SCRIPT_PROMPT_JOB_TTL_SECONDS = 1800
+_FILM_KEYFRAME_MODELS = {"pony", "anima"}
 
 
 def _template_path():
@@ -130,6 +137,16 @@ def _finite_number(value, default=0.0):
 
 def _safe_text(value, limit=12000):
     return str(value or "").strip()[:limit]
+
+
+def _film_keyframe_model(value):
+    """Keep the Film-only T2I base model explicit and restricted to adapters.
+
+    A Film plan can use either installed workflow-managed keyframe adapter.  It
+    never changes the Builder's global Music Video image-mode selection.
+    """
+    selected = _safe_text(value, 100).lower()
+    return selected if selected in _FILM_KEYFRAME_MODELS else "pony"
 
 
 def _frame_plan(seconds, fps):
@@ -319,6 +336,15 @@ def _normalize_scene(raw_scene, index, fps):
         "reference_image_path": _safe_text(source.get("reference_image_path", source.get("character_reference_path", "")), 4096),
         "reference_image_name": _safe_text(source.get("reference_image_name", ""), 512),
         "film_render_mode": render_mode,
+        # Phase 3 recipe metadata belongs to the Film scene only. It records
+        # an applied local recipe without changing the separate KB schema or
+        # silently rewriting the saved Pony/Anima workflow settings.
+        "concept_key": _safe_text(source.get("concept_key", source.get("pose_concept", source.get("concept", ""))), 240),
+        "concept_recipe_positive_fragment": _safe_text(source.get("concept_recipe_positive_fragment", ""), 16000),
+        "concept_recipe_negative_fragment": _safe_text(source.get("concept_recipe_negative_fragment", ""), 12000),
+        "concept_recipe_loras": source.get("concept_recipe_loras", []) if isinstance(source.get("concept_recipe_loras", []), list) else [],
+        "concept_recipe_settings": source.get("concept_recipe_settings", {}) if isinstance(source.get("concept_recipe_settings", {}), dict) else {},
+        "applied_concept_recipe": source.get("applied_concept_recipe", {}) if isinstance(source.get("applied_concept_recipe", {}), dict) else {},
         "rendered_video_path": _safe_text(source.get("rendered_video_path", source.get("video_path", "")), 4096),
         "video_path": _safe_text(source.get("video_path", source.get("rendered_video_path", "")), 4096),
         "actual_duration_seconds": max(0.0, _finite_number(source.get("actual_duration_seconds", 0), 0)),
@@ -370,6 +396,8 @@ def _plan_payload(payload):
     scenes, duration = _reflow_scenes(raw_scenes, fps)
     selected_loras = _payload_lora_names(payload)
     style_profile = _payload_style_profile(payload)
+    film_config = payload.get("script_to_film", {}) if isinstance(payload.get("script_to_film"), dict) else {}
+    keyframe_model = _film_keyframe_model(payload.get("keyframe_model", film_config.get("keyframe_model", "pony")))
     for scene in scenes:
         _resolve_scene_lora_knowledge(scene, {
             **(payload if isinstance(payload, dict) else {}),
@@ -382,6 +410,7 @@ def _plan_payload(payload):
         "frame_constraint": "(frames - 1) % 8 == 0",
         "profile": _FILM_PROFILE,
         "profile_label": _FILM_PROFILE_LABEL,
+        "keyframe_model": keyframe_model,
         "scenes": scenes,
         "lora_knowledge_loras": selected_loras,
         "style_profile_path": style_profile.get("path", ""),
@@ -818,6 +847,7 @@ def _ensure_routes():
             "frame_constraint": "(frames - 1) % 8 == 0",
             "default_fps": _DEFAULT_FPS,
             "default_target_seconds": _DEFAULT_TARGET_SECONDS,
+            "keyframe_model_choices": ["pony", "anima"],
             "system_prompt_path": _system_prompt_path(),
             "system_prompt_exists": os.path.isfile(_system_prompt_path()),
             "workflow_template_path": _template_path(),
@@ -875,6 +905,73 @@ def _ensure_routes():
     async def script_to_film_plan(request):
         try:
             return web.json_response({"ok": True, **_plan_payload(await request.json())})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/concept_intelligence/suggest")
+    async def script_to_film_concept_suggest(request):
+        """Return compact, quality-ranked Phase 1 recipes for one Film scene."""
+        try:
+            payload = await request.json()
+            scene = payload.get("scene", payload) if isinstance(payload, dict) else {}
+            result = await asyncio.to_thread(
+                suggest_scene_recipes,
+                scene,
+                payload.get("base_model", payload.get("keyframe_model", "Pony")),
+                _int_payload(payload, "limit", 3, 1, 12),
+            )
+            return web.json_response({"ok": True, **result})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/concept_intelligence/apply")
+    async def script_to_film_concept_apply(request):
+        """Apply one user-selected local recipe to a Film scene record."""
+        try:
+            payload = await request.json()
+            scene = payload.get("scene", {}) if isinstance(payload, dict) else {}
+            result = await asyncio.to_thread(
+                apply_recipe_to_scene,
+                scene,
+                payload.get("concept_key", ""),
+                payload.get("recipe_id", ""),
+                payload.get("base_model", payload.get("keyframe_model", "Pony")),
+            )
+            return web.json_response({"ok": True, **result})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/concept_intelligence/research")
+    async def script_to_film_concept_research(request):
+        """Start an explicit review-only Phase 2 search from the Film Planner."""
+        try:
+            payload = await request.json()
+            result = await asyncio.to_thread(
+                research_more_for_scene,
+                payload.get("concept_query", payload.get("concept_key", "")),
+                payload.get("base_model", payload.get("keyframe_model", "Pony")),
+                _int_payload(payload, "max_candidates", 8, 1, 20),
+                bool(payload.get("safe_only", True)),
+            )
+            return web.json_response({"ok": True, **result})
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    @server.routes.post("/vrgdg/script_to_film/concept_intelligence/save_research")
+    async def script_to_film_concept_save_research(request):
+        """Save only explicitly checked/reviewed Phase 2 candidates, then refresh."""
+        try:
+            payload = await request.json()
+            result = await asyncio.to_thread(
+                save_researched_scene_recipes,
+                payload.get("candidates_payload", payload.get("candidates_json", {})),
+                payload.get("candidate_ids", ""),
+                payload.get("concept_key", ""),
+                payload.get("base_model", payload.get("keyframe_model", "Pony")),
+                _float_payload(payload, "quality_score", 6.0, 0.0, 10.0),
+                payload.get("review_notes", ""),
+            )
+            return web.json_response({"ok": True, **result})
         except Exception as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
 

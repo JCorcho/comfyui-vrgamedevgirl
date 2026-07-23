@@ -1,10 +1,21 @@
 # Concept / Pose Recipe Library
 
-This is a small local library for saving generation setups that reliably produce a pose, body mechanic, camera angle, or other reusable concept. It does not alter your Character Bible, LoRA metadata, Music Video projects, or renders by itself.
+This is a small local library for saving generation setups that reliably produce a pose, body mechanic, camera angle, or other reusable concept. It does not alter your Character Bible, LoRA metadata, or Music Video projects. In **Script-to-Film** only, the Film Planner can now suggest and apply a recipe to the scene you are editing.
+
+## Use local recipes while editing a Film scene
+
+1. Open the Builder or Wizard, switch to **Script-to-Film**, then choose **Film Planner**. Both buttons open the same planner and use the same saved Film plan.
+2. Choose the Film **Keyframe base model**: **Pony** or **Anima**. Suggestions are filtered to that model family, and the same selection chooses the corresponding saved Violets T2I workflow when the Film renders a missing keyframe.
+3. Open a Film scene. The planner automatically looks for a local concept name in the scene's label, action/continuity text, and prompts. For a deterministic match, fill in **Concept / pose** yourself, for example `low_crouch` or `arched_back`.
+4. Review the compact local recipe cards. They show the quality score, seed, CFG, steps, sampler, LoRAs, and a short positive-prompt preview. Choose **Apply recipe to this scene** only after you have reviewed one.
+5. Applying copies the positive fragment into the scene's keyframe prompt and records the recipe's negative fragment, LoRAs, seed, CFG, steps, sampler, source, and recipe ID in that Film scene. It never writes trigger words to the Character Bible and never silently changes the workflow-managed negative conditioning, sampler, or LoRA stack inside `VioletsT2I(Pony)` / `VioletsT2I(Anima)`.
+6. If the library has no suitable result, choose **Research more for this concept**. Review the returned Civitai candidates, check only the candidates you approve, and choose **Approve selected and save to local recipes**. The planner immediately refreshes the local suggestions after the save. Safe-only research is on by default; clear it only when you deliberately want adult-allowed results.
+
+The **Concept / pose** field and the applied-recipe metadata are stored only in the Script-to-Film scene plan. They have no effect in Music Video mode.
 
 ## Ready-to-open test workflows
 
-Five working canvases are already installed in ComfyUI's **Workflows** sidebar,
+Six working canvases are already installed in ComfyUI's **Workflows** sidebar,
 inside the **VRGDG Concept Recipe Tests** subfolder. Refresh that sidebar and
 open these files in order:
 
@@ -13,6 +24,7 @@ open these files in order:
 3. **Browse Local Recipes** — lists, views, and runs Best Match without writing.
 4. **Manual Add or Edit Test Recipe** — creates a disposable `manual_test_pose_01`; queue it again after changing a field to test updates.
 5. **Delete Manual Test Recipe** — removes only that disposable manual test record.
+6. **Script-to-Film Concept Intelligence** — a review-only canvas for the Script-to-Film suggestion, apply, and research nodes; its research node does not save candidates.
 
 The tracked source copies live in `custom_nodes/comfyui-vrgamedevgirl/Workflows/KnowledgeBase/`; the installed copies live in `ComfyUI/user/default/workflows/VRGDG Concept Recipe Tests/`. None of these canvases loads a generation model or touches the Music Video pipeline.
 After workflow 05 runs, the local-only `manual_test_pose` concept is removed entirely rather than being left behind as an empty record.

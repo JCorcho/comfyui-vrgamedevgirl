@@ -42,6 +42,13 @@ function injectStyles() {
     .vrgdg-film-scene-body { padding:12px; display:grid; gap:10px; }
     .vrgdg-film-note { font-size:12px; line-height:1.45; color:#94a3b8; }
     .vrgdg-film-status { font-size:12px; color:#67e8f9; }
+    .vrgdg-film-recipe-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; }
+    .vrgdg-film-recipe-card { padding:10px; border:1px solid #365a7a; border-radius:7px; background:#0a1828; display:grid; gap:7px; }
+    .vrgdg-film-recipe-card strong { color:#cffafe; }
+    .vrgdg-film-recipe-meta { font-size:12px; color:#bae6fd; line-height:1.4; }
+    .vrgdg-film-recipe-preview { font-size:12px; line-height:1.45; color:#cbd5e1; white-space:pre-wrap; }
+    .vrgdg-film-research-candidate { padding:9px; border:1px solid #334155; border-radius:7px; display:grid; gap:6px; }
+    .vrgdg-film-research-candidate input[type="checkbox"] { width:auto; margin-right:6px; }
   `;
   document.head.appendChild(style);
 }
@@ -175,6 +182,14 @@ function normalizeLoraNames(value) {
     });
 }
 
+function normalizeFilmKeyframeModel(value) {
+  return String(value || "").trim().toLowerCase() === "anima" ? "anima" : "pony";
+}
+
+function filmKeyframeModelLabel(value) {
+  return normalizeFilmKeyframeModel(value) === "anima" ? "Anima" : "Pony";
+}
+
 function jsonArray(value, label) {
   const parsed = JSON.parse(String(value || "[]"));
   if (!Array.isArray(parsed)) throw new Error(`${label} must be a JSON array.`);
@@ -232,6 +247,7 @@ export function openScriptToFilmPlanner(config) {
   state.scriptToFilm.script = String(state.scriptToFilm.script || "");
   state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(state.scriptToFilm.lora_knowledge_loras);
   state.scriptToFilm.style_profile_path = String(state.scriptToFilm.style_profile_path || "").trim();
+  state.scriptToFilm.keyframe_model = normalizeFilmKeyframeModel(state.scriptToFilm.keyframe_model);
   const promptCreatorModels = promptCreatorModelChoices(state);
   state.scriptToFilm.prompt_creator_model = String(
     state.scriptToFilm.prompt_creator_model
@@ -245,6 +261,9 @@ export function openScriptToFilmPlanner(config) {
   let selectedKnowledgeLora = "";
   const attemptedCivitaiDetection = new Set();
   const activeCivitaiDetection = new Set();
+  const conceptSuggestions = new Map();
+  const activeSuggestionRequests = new Set();
+  const conceptResearchReviews = new Map();
   const backdrop = document.createElement("div");
   backdrop.className = "vrgdg-film-backdrop";
   const modal = document.createElement("section");
@@ -276,13 +295,47 @@ export function openScriptToFilmPlanner(config) {
     const plan = await requestJson("/vrgdg/script_to_film/plan", "POST", {
       fps: state.scriptToFilm.fps,
       scenes: state.segments,
+      keyframe_model: state.scriptToFilm.keyframe_model,
       lora_knowledge_loras: state.scriptToFilm.lora_knowledge_loras,
       style_profile_path: state.scriptToFilm.style_profile_path,
     });
     state.segments = ensureStableSceneIds(plan.scenes);
     state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
     state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
+    state.scriptToFilm.keyframe_model = normalizeFilmKeyframeModel(plan.keyframe_model || state.scriptToFilm.keyframe_model);
     apply(`Timeline reflowed: ${Number(plan.total_duration_seconds || 0).toFixed(2)} seconds.`);
+  };
+  const suggestionRequestKey = (scene) => [
+    String(scene?.id || ""),
+    normalizeFilmKeyframeModel(state.scriptToFilm.keyframe_model),
+    String(scene?.concept_key || scene?.pose_concept || scene?.concept || "").trim().toLowerCase(),
+  ].join("|");
+  const loadSceneSuggestions = async (scene, { force = false } = {}) => {
+    if (!scene || typeof scene !== "object") return null;
+    const sceneId = String(scene.id || "").trim();
+    if (!sceneId) return null;
+    const requestKey = suggestionRequestKey(scene);
+    const current = conceptSuggestions.get(sceneId);
+    if (!force && current?.requestKey === requestKey) return current.data;
+    if (activeSuggestionRequests.has(requestKey)) return null;
+    activeSuggestionRequests.add(requestKey);
+    try {
+      const data = await requestJson("/vrgdg/script_to_film/concept_intelligence/suggest", "POST", {
+        scene,
+        base_model: filmKeyframeModelLabel(state.scriptToFilm.keyframe_model),
+        limit: 3,
+      });
+      conceptSuggestions.set(sceneId, { requestKey, data });
+      if (document.body.contains(backdrop)) render();
+      return data;
+    } catch (error) {
+      const data = { recipes: [], message: `Local recipe suggestions are unavailable: ${errorMessage(error)}`, concept: { concept_key: "" } };
+      conceptSuggestions.set(sceneId, { requestKey, data });
+      if (document.body.contains(backdrop)) render();
+      return data;
+    } finally {
+      activeSuggestionRequests.delete(requestKey);
+    }
   };
   const autoDetectCivitaiForSelection = async (loraName, { force = false } = {}) => {
     const name = String(loraName || "").trim();
@@ -334,7 +387,15 @@ export function openScriptToFilmPlanner(config) {
         state.scriptToFilm.style_profile_path = String(value || "").trim();
         apply("Character Style Profile link updated. It is separate from the Character Bible.");
       }),
-      field("Keyframe image mode", "pony", () => {}, { select: [{ value: "pony", label: "Pony (VioletsT2I)" }] }),
+      field("Keyframe base model", state.scriptToFilm.keyframe_model, (value) => {
+        state.scriptToFilm.keyframe_model = normalizeFilmKeyframeModel(value);
+        conceptSuggestions.clear();
+        apply(`${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} is now the Film keyframe model; local recipe suggestions were refreshed for that base model.`);
+        render();
+      }, { select: [
+        { value: "pony", label: "Pony (VioletsT2I workflow)" },
+        { value: "anima", label: "Anima (VioletsT2I workflow)" },
+      ] }),
       field("LTX profile", "film_t2av_character_ref", () => {}, { select: [{ value: "film_t2av_character_ref", label: "Film/T2AV + Character Ref" }] }),
     );
     const script = field("Script", state.scriptToFilm.script, (value) => { state.scriptToFilm.script = value; }, { multiline: true });
@@ -363,6 +424,7 @@ export function openScriptToFilmPlanner(config) {
           llm_api_model: state.llm_api_model || "",
           lora_knowledge_loras: state.scriptToFilm.lora_knowledge_loras,
           style_profile_path: state.scriptToFilm.style_profile_path,
+          keyframe_model: state.scriptToFilm.keyframe_model,
         }, (jobStatus, elapsedSeconds) => {
           status.textContent = `Film Prompt Creator is still running (${jobStatus}, ${Math.floor(elapsedSeconds)}s): ${selectedModel || state.text_gemma_runner}…`;
         });
@@ -372,6 +434,7 @@ export function openScriptToFilmPlanner(config) {
         state.scriptToFilm.system_prompt_path = plan.system_prompt_path || "";
         state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
         state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
+        state.scriptToFilm.keyframe_model = normalizeFilmKeyframeModel(plan.keyframe_model || state.scriptToFilm.keyframe_model);
         const recovery = String(plan.recovery_message || "").trim();
         try {
           apply(`Created ${plan.scenes.length} duration-snapped Film shots with ${plan.used_model || "the selected model"}.${recovery ? ` ${recovery}` : ""}`);
@@ -528,7 +591,7 @@ export function openScriptToFilmPlanner(config) {
 
     const scenesCard = document.createElement("section");
     scenesCard.className = "vrgdg-film-card";
-    scenesCard.append(Object.assign(document.createElement("h3"), { textContent: `3. Film scenes (${state.segments.length})` }), Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Use Pure T2AV for unconditioned establishing shots. Use I2V/T2AV + Character Ref for Pony keyframes or character locking. The selected Violets LTX FP8 profile supplies DMD 1.0, JoyAI 0.5, and the shared Audio Text Encoder / sampler controls." }));
+    scenesCard.append(Object.assign(document.createElement("h3"), { textContent: `3. Film scenes (${state.segments.length})` }), Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: `Use Pure T2AV for unconditioned establishing shots. Use I2V/T2AV + Character Ref for ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} keyframes or character locking. The selected Violets LTX FP8 profile supplies DMD 1.0, JoyAI 0.5, and the shared Audio Text Encoder / sampler controls.` }));
     for (const [index, scene] of state.segments.entries()) {
       const details = document.createElement("details");
       details.className = "vrgdg-film-scene";
@@ -542,7 +605,14 @@ export function openScriptToFilmPlanner(config) {
         field("Shot label", scene.label, (value) => { scene.label = value; apply(); }, {}),
         field("Target duration (seconds)", scene.target_duration_seconds, (value) => { scene.target_duration_seconds = Math.max(.1, Number(value || 4)); scene.actual_duration_seconds = 0; apply("Duration changed; LTX frame count snapped."); render(); }, { type: "number" }),
         field("Render mode", scene.film_render_mode || "i2v_t2av", (value) => { scene.film_render_mode = value; apply(); }, { select: [{ value: "i2v_t2av", label: "I2V/T2AV + Character Ref" }, { value: "t2av", label: "Pure T2AV establishing shot" }] }),
-        field("Character / Pony keyframe image", scene.character_reference_path || scene.ref_image_path || "", (value) => { scene.character_reference_path = value; scene.ref_image_path = value; apply(); }),
+        field(`Character / ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} keyframe image`, scene.character_reference_path || scene.ref_image_path || "", (value) => { scene.character_reference_path = value; scene.ref_image_path = value; apply(); }),
+        field("Concept / pose (optional override)", scene.concept_key || scene.pose_concept || scene.concept || "", (value) => {
+          scene.concept_key = String(value || "").trim();
+          conceptSuggestions.delete(String(scene.id || ""));
+          conceptResearchReviews.delete(String(scene.id || ""));
+          apply("Concept / pose updated. Matching local recipes are being checked.");
+          void loadSceneSuggestions(scene, { force: true });
+        }),
         field("Scene LoRA metadata refs (optional)", normalizeLoraNames(scene.lora_knowledge_refs).join(", "), (value) => { scene.lora_knowledge_refs = normalizeLoraNames(value); apply("Scene LoRA refs updated; blank uses the project selection."); }),
         field("Transition cut", scene.transition_cut_type || "auto", (value) => { scene.transition_cut_type = value; apply(); }, { select: [{ value: "auto", label: "Carry ambience when requested" }, { value: "hard_cut", label: "Hard cut: no ambience overlap" }] }),
         field("Ambience overlap (seconds)", scene.transition_overlap_seconds ?? .25, (value) => { scene.transition_overlap_seconds = Math.max(0, Math.min(2, Number(value || 0))); apply(); }, { type: "number" }),
@@ -550,7 +620,7 @@ export function openScriptToFilmPlanner(config) {
       sceneBody.append(core);
       const prompts = document.createElement("div"); prompts.className = "vrgdg-film-grid";
       prompts.append(
-        field("Pony keyframe prompt", scene.t2i_prompt, (value) => { scene.t2i_prompt = value; apply(); }, { multiline: true }),
+        field(`${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} keyframe prompt`, scene.t2i_prompt, (value) => { scene.t2i_prompt = value; scene.keyframe_prompt = value; apply(); }, { multiline: true }),
         field("Unified natural-language LTX visual + audio prompt", scene.unified_ltx_prompt || scene.i2v_prompt, (value) => { scene.unified_ltx_prompt = value; scene.i2v_prompt = value; apply(); }, { multiline: true }),
         field("Dialogue / spoken content", scene.dialogue, (value) => { scene.dialogue = value; apply(); }, { multiline: true }),
       );
@@ -569,13 +639,187 @@ export function openScriptToFilmPlanner(config) {
         }, { multiline: name !== "ducking_level", type: name === "ducking_level" ? "number" : "text" }));
       }
       sceneBody.append(continuity);
+      const intelligence = document.createElement("section");
+      intelligence.className = "vrgdg-film-recipe-card";
+      intelligence.append(
+        Object.assign(document.createElement("strong"), { textContent: "Concept / Pose recipe suggestions" }),
+        Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: `Local ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} recipes are ranked by the existing Knowledge Base quality score. An explicit Concept / pose overrides automatic matching from the scene text.` }),
+      );
+      const sceneId = String(scene.id || "");
+      const suggestionEntry = conceptSuggestions.get(sceneId);
+      if (!suggestionEntry) {
+        intelligence.append(Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Checking local recipes for this scene…" }));
+        void loadSceneSuggestions(scene);
+      } else {
+        const suggestions = suggestionEntry.data || {};
+        const inferred = suggestions.concept || {};
+        const inferredText = inferred.concept_key
+          ? `${inferred.inference === "explicit" ? "Using" : "Inferred"} concept: ${inferred.display_name || inferred.concept_key}.`
+          : "No local concept could be inferred yet.";
+        intelligence.append(Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: inferredText }));
+        const recipeList = Array.isArray(suggestions.recipes) ? suggestions.recipes : [];
+        if (recipeList.length) {
+          const cards = document.createElement("div");
+          cards.className = "vrgdg-film-recipe-grid";
+          for (const recipe of recipeList) {
+            const card = document.createElement("article");
+            card.className = "vrgdg-film-recipe-card";
+            const loraText = (Array.isArray(recipe.loras) ? recipe.loras : []).map((item) => `${item.name || "LoRA"} @ ${Number(item.weight ?? 1)}`).join("; ") || "none";
+            card.append(
+              Object.assign(document.createElement("strong"), { textContent: `Quality ${Number(recipe.quality_score || 0).toFixed(1)} · ${recipe.recipe_id}` }),
+              Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-meta", textContent: `Seed ${recipe.seed || "—"} · CFG ${recipe.cfg ?? "—"} · ${recipe.steps ?? "—"} steps · ${recipe.sampler || "sampler unspecified"}` }),
+              Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-meta", textContent: `LoRAs: ${loraText}` }),
+              Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-preview", textContent: recipe.positive_prompt_preview || "No positive prompt stored." }),
+            );
+            const applyRecipe = Object.assign(document.createElement("button"), { className: "vrgdg-film-button", textContent: "Apply recipe to this scene" });
+            applyRecipe.onclick = async () => {
+              try {
+                applyRecipe.disabled = true;
+                const applied = await requestJson("/vrgdg/script_to_film/concept_intelligence/apply", "POST", {
+                  scene,
+                  concept_key: inferred.concept_key,
+                  recipe_id: recipe.recipe_id,
+                  base_model: filmKeyframeModelLabel(state.scriptToFilm.keyframe_model),
+                });
+                Object.assign(scene, applied.scene || {});
+                conceptSuggestions.delete(sceneId);
+                apply(`Applied ${recipe.recipe_id}: positive fragment, negative fragment, recipe LoRAs, seed, CFG, steps, and sampler were copied into this Film scene.`);
+                render();
+              } catch (error) {
+                status.textContent = `Recipe apply error: ${errorMessage(error)}`;
+              } finally { applyRecipe.disabled = false; }
+            };
+            card.append(applyRecipe);
+            cards.append(card);
+          }
+          intelligence.append(cards);
+        } else {
+          intelligence.append(Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: suggestions.message || "No matching local recipes are available yet." }));
+        }
+        const appliedRecipe = scene.applied_concept_recipe || {};
+        if (appliedRecipe.recipe_id) {
+          const settings = scene.concept_recipe_settings || {};
+          intelligence.append(Object.assign(document.createElement("p"), {
+            className: "vrgdg-film-note",
+            textContent: `Applied recipe: ${appliedRecipe.recipe_id} · saved seed ${settings.seed || "—"}, CFG ${settings.cfg ?? "—"}, ${settings.steps ?? "—"} steps, ${settings.sampler || "sampler unspecified"}. Its negative fragment and LoRA list are preserved in this scene record; workflow-managed negative conditioning and LoRA loading are never silently overwritten.`,
+          }));
+        }
+        const refreshSuggestions = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Refresh local suggestions" });
+        refreshSuggestions.onclick = async () => {
+          try {
+            refreshSuggestions.disabled = true;
+            await loadSceneSuggestions(scene, { force: true });
+            status.textContent = "Local recipe suggestions refreshed.";
+          } catch (error) { status.textContent = `Suggestion refresh error: ${errorMessage(error)}`; }
+          finally { refreshSuggestions.disabled = false; }
+        };
+        const researchMore = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Research more for this concept" });
+        researchMore.onclick = async () => {
+          try {
+            researchMore.disabled = true;
+            const latest = await loadSceneSuggestions(scene, { force: true });
+            const conceptKey = String(latest?.concept?.concept_key || scene.concept_key || "").trim();
+            if (!conceptKey) throw new Error("Add a Concept / pose value before researching more recipes.");
+            const review = conceptResearchReviews.get(sceneId) || { safe_only: true, max_candidates: 8, quality_score: 6 };
+            status.textContent = `Researching Civitai for ${conceptKey}; results will require review before they are saved.`;
+            const result = await requestJson("/vrgdg/script_to_film/concept_intelligence/research", "POST", {
+              concept_query: conceptKey,
+              base_model: filmKeyframeModelLabel(state.scriptToFilm.keyframe_model),
+              max_candidates: Number(review.max_candidates || 8),
+              safe_only: review.safe_only !== false,
+            });
+            conceptResearchReviews.set(sceneId, { ...review, result, selected_ids: [] });
+            status.textContent = `Civitai returned ${Number(result.candidate_count || 0)} review candidate(s) for ${conceptKey}.`;
+            render();
+          } catch (error) { status.textContent = `Concept research error: ${errorMessage(error)}`; }
+          finally { researchMore.disabled = false; }
+        };
+        const recipeActions = document.createElement("div");
+        recipeActions.className = "vrgdg-film-actions";
+        recipeActions.append(refreshSuggestions, researchMore);
+        intelligence.append(recipeActions);
+        const review = conceptResearchReviews.get(sceneId);
+        if (review) {
+          const reviewCard = document.createElement("section");
+          reviewCard.className = "vrgdg-film-recipe-card";
+          reviewCard.append(Object.assign(document.createElement("strong"), { textContent: `Civitai review · ${Number(review.result?.candidate_count || 0)} candidate(s)` }));
+          const reviewControls = document.createElement("div");
+          reviewControls.className = "vrgdg-film-actions";
+          const safeWrap = document.createElement("label");
+          safeWrap.className = "vrgdg-film-label";
+          const safeOnly = document.createElement("input");
+          safeOnly.type = "checkbox";
+          safeOnly.checked = review.safe_only !== false;
+          safeOnly.onchange = () => { review.safe_only = safeOnly.checked; };
+          safeWrap.append(safeOnly, document.createTextNode(" Safe-only research (clear for adult-allowed)"));
+          const candidateLimit = field("Maximum candidates", review.max_candidates || 8, (value) => { review.max_candidates = Math.max(1, Math.min(20, Number(value || 8))); }, { type: "number" });
+          const qualityScore = field("Quality score when saving", review.quality_score ?? 6, (value) => { review.quality_score = Math.max(0, Math.min(10, Number(value || 0))); }, { type: "number" });
+          reviewControls.append(safeWrap, candidateLimit, qualityScore);
+          reviewCard.append(reviewControls);
+          const candidates = Array.isArray(review.result?.candidates) ? review.result.candidates : [];
+          if (!candidates.length) {
+            reviewCard.append(Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: (review.result?.warnings || ["No review candidates were returned."]).join(" ") }));
+          } else {
+            const candidatesList = document.createElement("div");
+            candidatesList.className = "vrgdg-film-recipe-grid";
+            for (const candidate of candidates) {
+              const candidateId = String(candidate.candidate_id || "");
+              const candidateCard = document.createElement("label");
+              candidateCard.className = "vrgdg-film-research-candidate";
+              const select = document.createElement("input");
+              select.type = "checkbox";
+              select.checked = Array.isArray(review.selected_ids) && review.selected_ids.includes(candidateId);
+              select.onchange = () => {
+                const picked = new Set(Array.isArray(review.selected_ids) ? review.selected_ids : []);
+                if (select.checked) picked.add(candidateId); else picked.delete(candidateId);
+                review.selected_ids = Array.from(picked);
+              };
+              const label = document.createElement("span");
+              label.append(select, document.createTextNode(` Review ${candidateId}`));
+              const loras = (Array.isArray(candidate.loras) ? candidate.loras : []).map((item) => `${item.name || "LoRA"} @ ${Number(item.weight ?? 1)}`).join("; ") || "none";
+              candidateCard.append(
+                label,
+                Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-meta", textContent: `Seed ${candidate.seed || "—"} · CFG ${candidate.cfg ?? "—"} · ${candidate.steps ?? "—"} steps · ${candidate.sampler || "sampler unspecified"}` }),
+                Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-meta", textContent: `LoRAs: ${loras}` }),
+                Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-preview", textContent: String(candidate.positive_prompt || "").slice(0, 320) || "No positive prompt stored." }),
+              );
+              candidatesList.append(candidateCard);
+            }
+            reviewCard.append(candidatesList);
+          }
+          const saveReviewed = Object.assign(document.createElement("button"), { className: "vrgdg-film-button", textContent: "Approve selected and save to local recipes" });
+          saveReviewed.onclick = async () => {
+            try {
+              const selectedIds = Array.isArray(review.selected_ids) ? review.selected_ids.filter(Boolean) : [];
+              if (!selectedIds.length) throw new Error("Check one or more candidates after reviewing them before saving.");
+              saveReviewed.disabled = true;
+              const conceptKey = String(review.result?.query || suggestions.concept?.concept_key || scene.concept_key || "").trim();
+              const saved = await requestJson("/vrgdg/script_to_film/concept_intelligence/save_research", "POST", {
+                candidates_payload: review.result,
+                candidate_ids: selectedIds.join(","),
+                concept_key: conceptKey,
+                base_model: filmKeyframeModelLabel(state.scriptToFilm.keyframe_model),
+                quality_score: Number(review.quality_score ?? 6),
+              });
+              conceptResearchReviews.delete(sceneId);
+              conceptSuggestions.delete(sceneId);
+              await loadSceneSuggestions(scene, { force: true });
+              apply(`Saved ${Number(saved.saved_count || 0)} reviewed recipe(s) locally. The refreshed suggestions now include them.`);
+            } catch (error) { status.textContent = `Recipe save error: ${errorMessage(error)}`; }
+            finally { saveReviewed.disabled = false; }
+          };
+          reviewCard.append(saveReviewed, Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Civitai candidates are never auto-saved. Check each one you want only after reviewing its prompt, LoRAs, and settings." }));
+          intelligence.append(reviewCard);
+        }
+      }
+      sceneBody.append(intelligence);
       const resolved = scene.resolved_lora_triggers || {};
       const keyframeKeys = (resolved.keyframe || []).flatMap((item) => item.keys || []);
       const ltxKeys = (resolved.ltx || []).flatMap((item) => item.keys || []);
       if (keyframeKeys.length || ltxKeys.length) {
         sceneBody.append(Object.assign(document.createElement("p"), {
           className: "vrgdg-film-note",
-          textContent: `Resolved LoRA trigger keys — Pony: ${keyframeKeys.join(", ") || "none"}; LTX: ${ltxKeys.join(", ") || "none"}. Triggers are kept out of Character Bible.`,
+          textContent: `Resolved LoRA trigger keys — ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)}: ${keyframeKeys.join(", ") || "none"}; LTX: ${ltxKeys.join(", ") || "none"}. Triggers are kept out of Character Bible.`,
         }));
       }
       details.append(sceneBody);
@@ -591,12 +835,14 @@ export function openScriptToFilmPlanner(config) {
         project_folder: state.projectFolder,
         fps: state.scriptToFilm.fps,
         scenes: state.segments,
+        keyframe_model: state.scriptToFilm.keyframe_model,
         lora_knowledge_loras: state.scriptToFilm.lora_knowledge_loras,
         style_profile_path: state.scriptToFilm.style_profile_path,
       });
       state.segments = plan.scenes;
       state.scriptToFilm.lora_knowledge_loras = normalizeLoraNames(plan.lora_knowledge_loras || state.scriptToFilm.lora_knowledge_loras);
       state.scriptToFilm.style_profile_path = String(plan.style_profile_path || state.scriptToFilm.style_profile_path || "").trim();
+      state.scriptToFilm.keyframe_model = normalizeFilmKeyframeModel(plan.keyframe_model || state.scriptToFilm.keyframe_model);
       apply(`Saved Film plan: ${plan.plan_path}`);
     } catch (error) { status.textContent = String(error?.message || error); }
   };
