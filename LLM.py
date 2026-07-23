@@ -3607,9 +3607,25 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
         **kwargs,
     ) -> Tuple[str, str, str]:
         model_id = self._resolve_model_id(model_preset, custom_model_id)
-        instruction_text = self._build_instruction_text(
-            task_preset, user_input, trigger_word, custom_instructions
+        # Most legacy VRGDG prompt tasks deliberately combine their custom
+        # instructions and user details into one user message. A structured
+        # document generator is different: the selected chat model needs the
+        # caller-owned contract in the system role so it can reliably honour
+        # JSON mode. This is opt-in and therefore cannot change Music Video
+        # prompt behaviour.
+        use_separate_system_prompt = bool(
+            kwargs.get("preserve_structured_output", False)
+            and kwargs.get("separate_system_prompt", False)
+            and str(custom_instructions or "").strip()
         )
+        if use_separate_system_prompt:
+            instruction_text = str(user_input or "").strip()
+            structured_system_prompt = str(custom_instructions or "").strip()
+        else:
+            instruction_text = self._build_instruction_text(
+                task_preset, user_input, trigger_word, custom_instructions
+            )
+            structured_system_prompt = ""
         if not instruction_text:
             return ("", model_id, "error: user_input/custom_instructions is empty")
         pil_images = self._collect_pil_images(image_count, kwargs)
@@ -3655,6 +3671,7 @@ class VRGDG_GeneralGGUF(VRGDG_Qwen25):
                     temperature,
                     top_p,
                     max_new_tokens,
+                    system_prompt=structured_system_prompt,
                     structured_json=bool(kwargs.get("preserve_structured_output", False)),
                 )
             text = str(text or "").strip()

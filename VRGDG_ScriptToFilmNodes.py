@@ -35,6 +35,10 @@ from .VRGDG_LoraKnowledgeBase import (
     upsert_entry,
 )
 from .VRGDG_MusicVideoPromptCreatorNodes import _extract_json_object, _run_text_gemma_custom
+from .VRGDG_ScriptToFilmPromptPlan import (
+    extract_film_scene_plan as _extract_film_scene_plan,
+    film_prompt_creator_settings as _film_prompt_creator_settings,
+)
 from .VRGDG_ScriptToFilmConceptIntelligence import (
     apply_recipe_to_scene,
     research_more_for_scene,
@@ -513,6 +517,7 @@ def _create_prompt_creator_output(payload):
         raise ValueError("Paste a script before creating a Script-to-Film plan.")
     system_prompt, system_path = _read_system_prompt()
     runner_payload = dict(payload or {})
+    runner_payload["llm_settings"] = _film_prompt_creator_settings(runner_payload.get("llm_settings"))
     selected_loras = _payload_lora_names(runner_payload)
     style_profile = _payload_style_profile(runner_payload)
     generation_context = prompt_creator_context(selected_loras, style_profile)
@@ -527,6 +532,10 @@ def _create_prompt_creator_output(payload):
     # records, not a one-paragraph prompt. This opt-in leaves Music Video's
     # historical output cleanup untouched.
     runner_payload["preserve_structured_output"] = True
+    # Keep the editable Film prompt contract in the actual system role for
+    # local chat templates.  This is Film-only and leaves Music Video's
+    # historical one-message prompt path untouched.
+    runner_payload["separate_system_prompt"] = True
     _validate_film_prompt_creator_capacity(runner_payload)
     result = _run_text_gemma_custom(
         runner_payload.get("model_file", runner_payload.get("text_gemma_model", "")),
@@ -536,11 +545,15 @@ def _create_prompt_creator_output(payload):
         runner_payload,
     )
     recovery_message = ""
+    parse_mode = ""
     try:
-        parsed = _extract_json_object(result.get("text", ""))
-        source_scenes = parsed.get("scenes", parsed.get("film_scenes", [])) if isinstance(parsed, dict) else []
+        source_scenes, parse_mode = _extract_film_scene_plan(result.get("text", ""), _extract_json_object)
+        if parse_mode == "partial_array":
+            recovery_message = (
+                f"The selected model ended before closing its full JSON plan, but {len(source_scenes)} complete "
+                "scene record(s) were preserved. Review them, then continue planning from the last shot if needed."
+            )
     except Exception as exc:
-        parsed = {}
         source_scenes = []
         recovery_message = f"The selected model did not return a JSON scene plan ({type(exc).__name__}); one editable recovery scene was created from your script."
     if not isinstance(source_scenes, list) or not source_scenes:
@@ -559,10 +572,11 @@ def _create_prompt_creator_output(payload):
         "runner": result.get("runner", "builtin"),
         "system_prompt_path": system_path,
         "recovery_message": recovery_message,
+        "parse_mode": parse_mode or "recovery_scene",
     })
     print(
         "[VRGDG Script-to-Film] Prompt Creator completed: "
-        f"scenes={len(plan['scenes'])}, recovered={bool(recovery_message)}, "
+        f"scenes={len(plan['scenes'])}, parse_mode={plan['parse_mode']}, recovered={bool(recovery_message)}, "
         f"model={plan['used_model'] or 'unknown'}"
     )
     return plan

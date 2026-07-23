@@ -53,6 +53,8 @@ The Prompt Creator writes one complete record for each shot. It creates a Pony k
 prompts\ScriptToFilm_PromptCreator_System.txt
 ```
 
+The Film planner automatically gives the selected local model enough working context for a multi-shot JSON document. This is Film-only and does not change the normal Music Video prompt settings. A normal successful result shows multiple scene cards without a recovery warning.
+
 Keep that file's GROK start and end markers intact.
 
 ## Review and adjust each Film scene
@@ -120,6 +122,7 @@ The profile name leaves room for IP-Adapter/InstantID-style locking in a future 
 | I only see Music Video controls | Hard-refresh with `Ctrl+Shift+R`, then choose **Project Mode → Script-to-Film**. |
 | The Wizard asks for a song or lyrics | Open **Settings**, switch to **Script-to-Film**, then reopen the Wizard step. |
 | Prompt Creator uses the wrong model | Set the wanted model in the Builder's normal Prompt Creator / LLM settings before clicking **Create structured film scenes**. |
+| The planner says it created one editable recovery scene | The selected model did not return a usable scene array. Do not build from that placeholder; retry after shortening the script or use a model with more usable context. If the warning says complete scene records were preserved, review those records—the model ended before finishing the rest of the plan. |
 | A scene should not use a keyframe | Change its **Render mode** to **Pure T2AV establishing shot**. |
 | The duration changed after planning | This is normal LTX frame snapping. Use **Reflow durations** and inspect the adjusted shot length. |
 | A transition should be abrupt | Set **Transition cut** to **Hard cut**. |

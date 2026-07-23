@@ -70,6 +70,16 @@ Script-to-Film calls the shared local LLM runner with `preserve_structured_outpu
 
 The Film route also logs the exception class and error message (never the raw script or model completion) as `[VRGDG Script-to-Film] Prompt Creator failed: ...`, so a failed UI request can be diagnosed from ComfyUI logs later.
 
+### Multi-scene JSON reliability
+
+The normal Builder LLM context setting defaults to 8K, which is appropriate for small prompt edits but too small to contain the Film system schema plus several complete scene records. `_create_prompt_creator_output` therefore raises only its own local GGUF request to a **16,384-token minimum**; a larger user-specified value is retained. This does not persist a changed setting and does not change any Music Video request.
+
+For the built-in GGUF runner, the exact contents of `prompts/ScriptToFilm_PromptCreator_System.txt` are sent as a real chat **system message** while the script remains the user message. The instructions still live only in the prompt file; Python adds no hidden Film-writing instructions. The existing llama.cpp JSON-object response constraint remains enabled.
+
+`_extract_film_scene_plan` accepts the intended `{ "scenes": [...] }` object and a model-returned root scene array. If a model is cut off after writing one or more complete objects inside `scenes`, it preserves only those complete, model-authored records using `json.JSONDecoder.raw_decode`. The response reports `parse_mode: "partial_array"` plus a visible `recovery_message`; it never pretends that the plan is complete. Only when no complete scene object exists does the older single editable recovery scene remain available. Logs record the parse mode and count, never raw script/model text.
+
+The contract test is `tests/test_script_to_film_prompt_plan.py`. It covers full object/list plans, safe partial-array preservation, and the Film-only context floor. A live verification should call `create_prompt_plan` with the actual selected GGUF, then confirm `parse_mode: "complete_document"`, an empty `recovery_message`, and more than one scene before treating the planner as fixed.
+
 If a local model still ignores the JSON contract, the route no longer abandons the plan. It returns one clearly labeled editable recovery scene derived from the supplied script and sets `recovery_message` in the response; the shared Builder/Wizard planner displays that warning. This is a continuity-preserving fallback, not a substitute for a correctly structured LLM plan. Successful and recovered requests are logged with scene count and recovery status only.
 
 ### Planner handoff safeguards

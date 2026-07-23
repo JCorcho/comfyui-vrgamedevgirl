@@ -1027,6 +1027,10 @@ def _run_text_gemma_custom(model_file, custom_instructions, user_input, override
         # paragraphs only when that dedicated route opts in; existing prompt
         # creator uses retain their historical single-paragraph cleanup.
         preserve_structured_output=bool(runner_payload.get("preserve_structured_output", False)),
+        # The dedicated Film prompt contract lives in its own editable file.
+        # Opting into a real system message makes local chat models honour that
+        # contract without affecting legacy Music Video calls.
+        separate_system_prompt=bool(runner_payload.get("separate_system_prompt", False)),
     )
     if str(status or "").strip().lower() != "ok":
         raise ValueError(str(status or "Gemma failed to run."))
