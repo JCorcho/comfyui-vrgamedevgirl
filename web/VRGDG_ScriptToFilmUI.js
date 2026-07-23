@@ -319,6 +319,7 @@ export function openScriptToFilmPlanner(config) {
   const conceptSuggestions = new Map();
   const activeSuggestionRequests = new Set();
   const conceptResearchReviews = new Map();
+  const expandedSceneIds = new Set();
   const backdrop = document.createElement("div");
   backdrop.className = "vrgdg-film-backdrop";
   const modal = document.createElement("section");
@@ -424,7 +425,18 @@ export function openScriptToFilmPlanner(config) {
       activeCivitaiDetection.delete(key);
     }
   };
+  const captureSceneViewState = () => {
+    const sceneDetails = Array.from(body.querySelectorAll("details.vrgdg-film-scene[data-scene-id]"));
+    const scrollTop = body.scrollTop;
+    if (!sceneDetails.length) return { hasSceneState: false, scrollTop };
+    expandedSceneIds.clear();
+    for (const details of sceneDetails) {
+      if (details.open && details.dataset.sceneId) expandedSceneIds.add(details.dataset.sceneId);
+    }
+    return { hasSceneState: true, scrollTop };
+  };
   const render = () => {
+    const previousView = captureSceneViewState();
     body.replaceChildren();
     const source = document.createElement("section");
     source.className = "vrgdg-film-card";
@@ -648,9 +660,15 @@ export function openScriptToFilmPlanner(config) {
     scenesCard.className = "vrgdg-film-card";
     scenesCard.append(Object.assign(document.createElement("h3"), { textContent: `3. Film scenes (${state.segments.length})` }), Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: `Use Pure T2AV for unconditioned establishing shots. Use I2V/T2AV + Character Ref for ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} keyframes or character locking. The selected Violets LTX FP8 profile supplies DMD 1.0, JoyAI 0.5, and the shared Audio Text Encoder / sampler controls.` }));
     for (const [index, scene] of state.segments.entries()) {
+      const sceneId = String(scene.id || `film_scene_${index + 1}`);
       const details = document.createElement("details");
       details.className = "vrgdg-film-scene";
-      if (index === 0) details.open = true;
+      details.dataset.sceneId = sceneId;
+      details.open = previousView.hasSceneState ? expandedSceneIds.has(sceneId) : index === 0;
+      details.addEventListener("toggle", () => {
+        if (details.open) expandedSceneIds.add(sceneId);
+        else expandedSceneIds.delete(sceneId);
+      });
       const title = scene.label || `Film shot ${index + 1}`;
       details.append(Object.assign(document.createElement("summary"), { textContent: `${index + 1}. ${title} · ${Number(scene.target_duration_seconds || 0).toFixed(2)}s · ${scene.planned_frames || framesForDuration(scene.target_duration_seconds, state.scriptToFilm.fps)} frames` }));
       const sceneBody = document.createElement("div");
@@ -700,7 +718,6 @@ export function openScriptToFilmPlanner(config) {
         Object.assign(document.createElement("strong"), { textContent: "Concept / Pose recipe suggestions" }),
         Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: `Local ${filmKeyframeModelLabel(state.scriptToFilm.keyframe_model)} recipes are ranked by the existing Knowledge Base quality score. An explicit Concept / pose overrides automatic matching from the scene text.` }),
       );
-      const sceneId = String(scene.id || "");
       const suggestionEntry = conceptSuggestions.get(sceneId);
       if (!suggestionEntry) {
         intelligence.append(Object.assign(document.createElement("p"), { className: "vrgdg-film-note", textContent: "Checking local recipes for this scene…" }));
@@ -890,6 +907,11 @@ export function openScriptToFilmPlanner(config) {
       scenesCard.append(details);
     }
     body.append(scenesCard);
+    if (previousView.scrollTop > 0) {
+      requestAnimationFrame(() => {
+        if (document.body.contains(backdrop)) body.scrollTop = previousView.scrollTop;
+      });
+    }
   };
 
   const save = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Save Film plan" });

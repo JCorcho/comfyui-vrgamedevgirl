@@ -147,6 +147,8 @@ Only `transition_cut_type: "hard_cut"` skips the requested ambience overlap. Any
 
 The shared Planner's `field()` helper supports `commitOnly` inputs for edits whose handlers rebuild the modal or start asynchronous work. Target duration and Concept / pose use this policy: commit on `change` (blur) or `Enter`, never on `input`. Do not attach `render()` or an async suggestion refresh to a keystroke handler, because replacing the modal during composition discards focus and makes multi-character values impossible to enter.
 
+`render()` snapshots the open `details` elements by stable scene ID and the Film body scroll position before replacing the modal contents. It restores the same expanded scenes and scroll position on the next animation frame. Every recipe suggestion/review map is also keyed by that stable scene ID. Preserve this behavior whenever asynchronous work refreshes the shared Planner; otherwise a result for a later scene appears inaccessible after a refresh resets the user to shot one.
+
 If adding a Film field, add it in all four places: backend `_normalize_scene`, planner editing UI, Builder session/history persistence, and Wizard’s shared planner entry point. Update `WIZARD_EDITOR_PARITY.md` in the same commit.
 
 ## Validation and smoke test

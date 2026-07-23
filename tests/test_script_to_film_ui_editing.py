@@ -20,6 +20,16 @@ class ScriptToFilmUiEditingTests(unittest.TestCase):
         self.assertIn('field("Concept / pose (optional override)"', source)
         self.assertIn('}, { commitOnly: true }),', source)
 
+    def test_async_scene_refreshes_keep_the_scene_context(self):
+        with open(UI_PATH, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        self.assertIn("const expandedSceneIds = new Set();", source)
+        self.assertIn("const captureSceneViewState = () =>", source)
+        self.assertIn('details.dataset.sceneId = sceneId;', source)
+        self.assertIn('details.open = previousView.hasSceneState ? expandedSceneIds.has(sceneId) : index === 0;', source)
+        self.assertIn('body.scrollTop = previousView.scrollTop;', source)
+
 
 if __name__ == "__main__":
     unittest.main()

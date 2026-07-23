@@ -74,6 +74,8 @@ Open a scene in the **Film scenes** section to edit it. The most important choic
 
 When manually changing **Target duration** or **Concept / pose**, type the whole value first, then press `Enter` or click outside the field to apply it. This deliberately waits for a complete value before reflowing the timeline or refreshing recipe suggestions.
 
+When a local-recipe refresh or **Research more for this concept** completes, the Planner keeps the scene(s) you had expanded and restores your vertical position. The returned suggestions and Civitai review candidates belong to the specific scene whose action you used.
+
 The remaining continuity fields are deliberately first-class controls, not hidden metadata:
 
 - **character bible** — face, body, visual identifiers, and clothing state;
