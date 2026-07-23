@@ -41,6 +41,79 @@ function listLoras(loras) {
   }).join("\n");
 }
 
+function usableHttpUrl(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function reviewTargets(searchNode) {
+  const graph = searchNode.graph || app.graph;
+  const output = searchNode.outputs?.find((item) => item?.name === "candidates_json");
+  const links = Array.isArray(output?.links) ? output.links : [];
+  return links.map((linkId) => {
+    const link = graph?.links?.[linkId];
+    const targetId = Array.isArray(link) ? link[3] : link?.target_id;
+    return graph?.getNodeById?.(targetId);
+  }).filter((node) => node?.comfyClass === "VRGDG_ConceptResearchViewCandidate");
+}
+
+function setNodeWidgetValue(node, name, value) {
+  const widget = node?.widgets?.find((item) => item?.name === name);
+  if (!widget) return false;
+  widget.value = value;
+  if (widget.inputEl) widget.inputEl.value = String(value);
+  widget.callback?.(value);
+  node.setDirtyCanvas?.(true, true);
+  return true;
+}
+
+function showReviewToast(payload) {
+  if (app.extensionManager?.toast?.add) {
+    app.extensionManager.toast.add(payload);
+  } else {
+    console.info(payload.summary, payload.detail);
+  }
+}
+
+function addSearchCandidateActions(node, candidates) {
+  for (const [index, candidate] of candidates.entries()) {
+    const ordinal = index + 1;
+    const candidateId = oneLine(candidate?.candidate_id, "");
+    const imageUrl = usableHttpUrl(candidate?.image_preview_url) || usableHttpUrl(candidate?.source_url);
+    if (imageUrl) {
+      node.addWidget("button", `Open image #${ordinal}`, imageUrl, () => {
+        window.open(imageUrl, "_blank", "noopener,noreferrer");
+      });
+    }
+    node.addWidget("button", `Review result #${ordinal}`, candidateId, () => {
+      const targets = reviewTargets(node);
+      for (const target of targets) {
+        setNodeWidgetValue(target, "candidate_id", candidateId);
+        setNodeWidgetValue(target, "candidate_number", ordinal);
+      }
+      if (!targets.length) {
+        showReviewToast({
+          severity: "warn",
+          summary: "Review node not connected",
+          detail: "Connect Search candidates_json to a View Candidate node, then click this button again.",
+          life: 4500,
+        });
+      } else {
+        showReviewToast({
+          severity: "success",
+          summary: `Selected result #${ordinal}`,
+          detail: "Queue the workflow to load its complete recipe details.",
+          life: 3500,
+        });
+      }
+    });
+  }
+}
+
 function candidateSummary(candidate, ordinal) {
   return [
     `#${ordinal}: ${oneLine(candidate?.candidate_id)}`,
@@ -72,7 +145,7 @@ function resultWidgets(nodeClass, message) {
     const directory = candidates.length
       ? candidates.map((candidate, index) => candidateSummary(candidate, index + 1)).join("\n\n")
       : "No matching candidates were returned. Try a broader concept or select Any as the base model.";
-    return [["Search summary", summary], ["Candidate directory", directory]];
+    return [["Search summary", summary], ["Candidate directory", directory], ["__candidate_actions__", candidates]];
   }
 
   if (nodeClass === "VRGDG_ConceptResearchViewCandidate") {
@@ -87,6 +160,7 @@ function resultWidgets(nodeClass, message) {
       `Model: ${oneLine(data.model_name)}`,
       `Base model: ${oneLine(data.base_model)}`,
       `Settings: ${oneLine(data.sampler)}, ${oneLine(data.steps)} steps, CFG ${oneLine(data.cfg)}, Seed ${oneLine(data.seed)}`,
+      `Selected by: ${oneLine(data.selection_mode)}`,
       `Civitai: ${oneLine(data.source_url)}`,
       `Post: ${oneLine(data.post_url)}`,
     ].join("\n");
@@ -122,6 +196,10 @@ function renderResultWidgets(node, message) {
   clearResultWidgets(node);
 
   for (const [label, value] of resultWidgets(node.comfyClass, message)) {
+    if (label === "__candidate_actions__") {
+      addSearchCandidateActions(node, Array.isArray(value) ? value : []);
+      continue;
+    }
     const widget = ComfyWidgets.STRING(
       node,
       label,

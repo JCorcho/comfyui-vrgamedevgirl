@@ -64,6 +64,48 @@ def _candidate_id_list(value: Any) -> set[str]:
     return {item for item in re.split(r"[,;\n\s]+", raw) if item}
 
 
+def _candidate_directory(candidates: list[dict[str, Any]]) -> list[str]:
+    """Return a short, copy-free selection guide for a review result."""
+    return [
+        f"#{index}: {_text(candidate.get('candidate_id', ''), 180) or 'unnamed candidate'}"
+        for index, candidate in enumerate(candidates, start=1)
+    ]
+
+
+def _select_candidate(
+    candidates: list[dict[str, Any]],
+    candidate_id: Any,
+    candidate_number: Any,
+) -> tuple[dict[str, Any] | None, str]:
+    """Select by exact ID or the user-visible one-based result number.
+
+    The original canvas displayed results as ``#1``, ``#2``, etc., but only
+    accepted the long ``civitai_image_<id>`` value. Treating a numeric entry as
+    the displayed result number eliminates that easy-to-make mismatch while
+    preserving exact-ID selection for automation and saved workflows.
+    """
+    requested = _text(candidate_id, 180)
+    if requested:
+        exact = next(
+            (item for item in candidates if _text(item.get("candidate_id", ""), 180) == requested),
+            None,
+        )
+        if exact is not None:
+            return exact, "candidate_id"
+        if requested.isdigit():
+            index = int(requested)
+            if 1 <= index <= len(candidates):
+                return candidates[index - 1], "candidate_number"
+        return None, "candidate_id"
+
+    try:
+        index = int(candidate_number)
+    except (TypeError, ValueError):
+        index = 1
+    index = max(1, index)
+    return (candidates[index - 1], "candidate_number") if index <= len(candidates) else (None, "candidate_number")
+
+
 def _candidate_to_recipe(candidate: dict[str, Any], quality_score: float, extra_notes: str, extra_tags: str) -> dict[str, Any]:
     candidate_id = _text(candidate.get("candidate_id", ""), 180)
     image_id = _text(candidate.get("civitai_image_id", ""), 120)
@@ -202,15 +244,25 @@ class VRGDG_ConceptResearchViewCandidate:
         return {
             "required": {
                 "candidates_json": ("STRING", {"default": "{}", "multiline": True, "forceInput": True}),
-                "candidate_id": ("STRING", {"default": "", "placeholder": "Paste a candidate_id; leave blank to view the first"}),
+                "candidate_id": ("STRING", {"default": "", "placeholder": "Optional exact ID, or enter result # such as 2"}),
+            },
+            "optional": {
+                "candidate_number": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": 1,
+                        "max": 20,
+                        "step": 1,
+                        "tooltip": "Pick the displayed result number. Leave Candidate ID blank for this simpler option; entering 2 in Candidate ID also selects result #2 for compatibility.",
+                    },
+                ),
             }
         }
 
-    def view(self, candidates_json, candidate_id=""):
+    def view(self, candidates_json, candidate_id="", candidate_number=1):
         payload = _parse_research_payload(candidates_json)
         candidates = [item for item in payload["candidates"] if isinstance(item, dict)]
-        selected_id = _text(candidate_id, 180)
-        selected = next((item for item in candidates if _text(item.get("candidate_id", ""), 180) == selected_id), None) if selected_id else (candidates[0] if candidates else None)
         if not candidates:
             result = {
                 "candidate_count": 0,
@@ -220,8 +272,25 @@ class VRGDG_ConceptResearchViewCandidate:
             }
             text = _json_output(result)
             return _text_ui_result(text, text, "")
+
+        selected, selection_mode = _select_candidate(candidates, candidate_id, candidate_number)
         if selected is None:
-            raise ValueError("No matching candidate is available. Run Search Civitai first and use its candidate_id.")
+            requested = _text(candidate_id, 180)
+            requested_label = f"Candidate ID '{requested}'" if requested else f"Result #{max(1, int(_number(candidate_number, 1)))}"
+            result = {
+                "candidate_count": len(candidates),
+                "requested_selection": requested_label,
+                "candidate_directory": _candidate_directory(candidates),
+                "action_required": (
+                    f"{requested_label} is not in this search result. Use one of the displayed result numbers "
+                    f"(1–{len(candidates)}), click a Review button on the Search node, or paste one of the listed full candidate IDs."
+                ),
+                "review_required": True,
+            }
+            text = _json_output(result)
+            return _text_ui_result(text, text, "")
+        selected = dict(selected)
+        selected["selection_mode"] = selection_mode
         text = _json_output(selected)
         return _text_ui_result(text, text, _text(selected.get("candidate_id", ""), 180))
 

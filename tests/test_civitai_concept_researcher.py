@@ -47,6 +47,7 @@ class FakeCivitaiClient:
                     {
                         "id": 101,
                         "postId": 202,
+                        "url": "https://image.civitai.com/test/101.webp",
                         "username": "recipe_author",
                         "nsfw": False,
                         "nsfwLevel": "None",
@@ -131,6 +132,7 @@ class CivitaiConceptResearchTests(unittest.TestCase):
         self.assertEqual("civitai_image_101", candidate["candidate_id"])
         self.assertEqual("https://civitai.com/images/101", candidate["source_url"])
         self.assertEqual("https://civitai.com/posts/202", candidate["post_url"])
+        self.assertEqual("https://image.civitai.com/test/101.webp", candidate["image_preview_url"])
         self.assertEqual("Pony", candidate["base_model"])
         self.assertEqual("Pony Test Checkpoint — V6 Test", candidate["model_name"])
         self.assertEqual("Pose Support LoRA — Pose Support v1", candidate["loras"][0]["name"])
@@ -161,6 +163,24 @@ class CivitaiConceptResearchTests(unittest.TestCase):
         self.assertEqual(0, message["candidate_count"])
         self.assertIn("nothing to review", message["action_required"])
         self.assertEqual("", result["result"][1])
+
+    def test_review_node_accepts_a_result_number_and_returns_guidance_for_a_missing_selection(self):
+        payload = {
+            "candidates": [
+                {"candidate_id": "civitai_image_101", "positive_prompt": "first"},
+                {"candidate_id": "civitai_image_202", "positive_prompt": "second"},
+            ]
+        }
+        node = research_nodes.VRGDG_ConceptResearchViewCandidate()
+        second = node.view(__import__("json").dumps(payload), "2", 1)
+        selected = __import__("json").loads(second["result"][0])
+        self.assertEqual("civitai_image_202", selected["candidate_id"])
+        self.assertEqual("candidate_number", selected["selection_mode"])
+
+        missing = node.view(__import__("json").dumps(payload), "99", 1)
+        guidance = __import__("json").loads(missing["result"][0])
+        self.assertIn("not in this search result", guidance["action_required"])
+        self.assertEqual(["#1: civitai_image_101", "#2: civitai_image_202"], guidance["candidate_directory"])
 
     def test_common_concept_aliases_match_visible_prompt_phrases(self):
         self.assertGreater(_relevance_score("doggystyle", "doggy style, from behind, detailed pose"), 0.0)

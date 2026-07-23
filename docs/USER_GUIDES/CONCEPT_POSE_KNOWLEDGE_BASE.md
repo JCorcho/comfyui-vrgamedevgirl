@@ -30,11 +30,13 @@ The tracked source copies live in `custom_nodes/comfyui-vrgamedevgirl/Workflows/
 After workflow 05 runs, the local-only `manual_test_pose` concept is removed entirely rather than being left behind as an empty record.
 
 After a Search and Review run, the **Search** node itself shows a readable
-`Search summary` and `Candidate directory` below its controls. `max_candidates`
-is an upper limit, not a promise: the summary reports the actual count returned.
-The **Review the first candidate** node shows the first matching candidate by
-default, including its Candidate ID, prompts, settings, LoRAs, and Civitai link.
-Paste a different Candidate ID into that node to inspect another result.
+`Search summary`, `Candidate directory`, and one **Open image #** button for
+each returned result. Click **Open image #** to view its Civitai image without
+copying a link. Click **Review result #** to fill the connected Review node for
+you, then queue the workflow. You can also enter a result number such as `2` in
+the Review node's **Candidate ID** field, or use **Candidate number**; full
+`civitai_image_…` IDs still work. `max_candidates` is an upper limit, not a
+promise: the summary reports the actual count returned.
 
 1. In ComfyUI, search for **VRGDG Concept Recipes: List Concepts**. Run it to see the available concepts.
 2. Connect **View Concept** and enter a key such as `arched_back` to inspect its recipes.
@@ -56,7 +58,7 @@ Each node also displays its returned JSON directly in the ComfyUI node result, s
 ## Research a Civitai recipe, then approve it
 
 1. Search for **VRGDG Concept Research: Search Civitai**. Enter a concept such as `arched_back`, select **Pony** or **Anima**, and run it. It returns a small list of review candidates; it does not save or apply anything automatically.
-2. Copy the `candidate_id` you want to inspect, such as `civitai_image_123456`, into **VRGDG Concept Research: View Candidate**. It shows the original Civitai image/post links, prompts, LoRAs, seed, sampler, CFG, steps, model, and metadata completeness.
+2. In the Search node, click **Open image #** to inspect a photo and **Review result #** to select it in the connected **VRGDG Concept Research: View Candidate** node. You can instead enter the displayed result number (such as `2`) or a full `civitai_image_123456` ID manually. It shows the original Civitai image/post links, prompts, LoRAs, seed, sampler, CFG, steps, model, and metadata completeness.
 3. After you have reviewed it, connect the search JSON to **VRGDG Concept Research: Save Approved Candidates**. Enter the selected ID (or comma-separated IDs), choose a local `quality_score`, add your test notes, and run it.
 4. Use **VRGDG Concept Recipes: View Concept** or **Best Match** to confirm the approved recipe is now in your local library.
 

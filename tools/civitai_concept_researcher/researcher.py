@@ -255,6 +255,16 @@ def _source_urls(image_id: str, post_id: str, site_root: str = _SAFE_SITE_ROOT) 
     return image_url, post_url
 
 
+def _image_preview_url(item: dict[str, Any]) -> str:
+    """Keep Civitai's public CDN image URL when the API supplies one.
+
+    This is presentation-only provenance. The Civitai image page remains the
+    durable review link because CDN URLs may be resized or expire over time.
+    """
+    value = _text(item.get("url", item.get("imageUrl", item.get("image_url", ""))), 4000)
+    return value if value.startswith(("https://", "http://")) else ""
+
+
 @dataclass
 class CivitaiClient:
     """Polite JSON client for the public Civitai API.
@@ -424,6 +434,7 @@ def _candidate_shell(
         "civitai_post_id": post_id,
         "source_url": source_url,
         "post_url": post_url,
+        "image_preview_url": _image_preview_url(item),
         "creator": _text(item.get("username", ""), 300),
         "base_model": actual_base,
         "base_model_verification": "metadata" if actual_base else "server_filter_only",

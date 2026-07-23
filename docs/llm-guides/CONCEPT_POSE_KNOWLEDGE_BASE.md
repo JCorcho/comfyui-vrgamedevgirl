@@ -88,7 +88,7 @@ The only networked code is `tools/civitai_concept_researcher/researcher.py`. It 
 
 For its small pre-ranked pool, the helper resolves checkpoint and LoRA IDs through `/api/v1/model-versions/<id>`. It spaces requests by at least 0.35 seconds, retries temporary network/429/5xx failures, and honors a `Retry-After` header. It uses only the standard library. Public metadata requires no login; an optional `CIVITAI_API_TOKEN` environment variable is read only at runtime if an owner needs authenticated access. Never put a token in source, JSON, workflow metadata, or documentation examples.
 
-Candidates contain `candidate_id`, Civitai image/post URLs, all visible recipe data, `metadata_completeness`, and a `candidate_score`. The latter is only a sort priority. Each candidate deliberately starts with `quality_score: 0.0`. The user must select a candidate ID and set their own local quality score after review/testing.
+Candidates contain `candidate_id`, durable Civitai image/post URLs, an optional public-CDN `image_preview_url`, all visible recipe data, `metadata_completeness`, and a `candidate_score`. The latter is only a sort priority. Each candidate deliberately starts with `quality_score: 0.0`. The user must select a candidate and set their own local quality score after review/testing.
 
 ### Research nodes
 
@@ -97,7 +97,7 @@ All Phase 2 nodes live in **VRGDG → Knowledge → Concept Research**.
 | Node | Role |
 | --- | --- |
 | `VRGDG Concept Research: Search Civitai` | Calls the external helper and outputs review-only candidate JSON. Offers Pony, Anima, Any, an optional custom base-model override, and a Safe-only search switch (on = SFW, off = adult-allowed). |
-| `VRGDG Concept Research: View Candidate` | Displays one exact candidate (full prompts, LoRAs, parameters, URLs, completeness) by its `candidate_id`. |
+| `VRGDG Concept Research: View Candidate` | Displays one exact candidate (full prompts, LoRAs, parameters, URLs, completeness) by its full `candidate_id` or one-based result number. A missing selection returns an instructional review result instead of throwing an execution error. |
 | `VRGDG Concept Research: Save Approved Candidates` | Explicitly saves one or more comma-separated IDs, or `all`, through `save_recipe()` into `knowledge_base/concepts/local/`. Re-saving an image updates the stable `civitai_image_<id>` recipe instead of duplicating it. |
 
 The save node reuses the Phase 1 schema: `source` carries the image URL plus post ID, `notes` carries resource provenance, and `loras` remains an array of `{name, weight}`. It does not write to the Character Bible, LoRA Knowledge Base, Script-to-Film, or Music Video paths.
@@ -155,10 +155,13 @@ The repository tracks six GUI-format workflows under `Workflows/KnowledgeBase/`.
 The companion frontend script `web/VRGDG_ConceptResearchResults.js` renders
 the backend's review-only `ui.text` payload directly inside the three Concept
 Research nodes. Preserve this behavior when changing their return data: Search
-must show the actual `candidate_count` plus a concise candidate directory;
-View Candidate must show the selected candidate's full recipe fields; Save
-Approved must show the local save result. The normal STRING/INT outputs remain
-the source of truth for graph wiring.
+must show the actual `candidate_count`, a concise candidate directory, an
+**Open image #** action, and a **Review result #** action for each candidate.
+The latter must fill a connected View Candidate node with the exact full ID;
+the View node also accepts the displayed result number (for example `2`) for
+manual use. View Candidate must show the selected candidate's full recipe
+fields; Save Approved must show the local save result. The normal STRING/INT
+outputs remain the source of truth for graph wiring.
 
 Do not combine the save or delete actions into the research/review canvas. That would make a routine test queue capable of mutating a user's persistent local library.
 

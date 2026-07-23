@@ -84,7 +84,7 @@
       ],
       "size": [
         420,
-        170
+        230
       ],
       "flags": {},
       "order": 1,
@@ -101,6 +101,14 @@
           "type": "STRING",
           "widget": {
             "name": "candidate_id"
+          },
+          "link": null
+        },
+        {
+          "name": "candidate_number",
+          "type": "INT",
+          "widget": {
+            "name": "candidate_number"
           },
           "link": null
         }
@@ -121,7 +129,8 @@
         "Node name for S&R": "VRGDG_ConceptResearchViewCandidate"
       },
       "widgets_values": [
-        ""
+        "",
+        1
       ]
     }
   ],
@@ -142,7 +151,7 @@
         -5,
         -51,
         1050,
-        416
+        476
       ],
       "color": "#35516b",
       "font_size": 24
