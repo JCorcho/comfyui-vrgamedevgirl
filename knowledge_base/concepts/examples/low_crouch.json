@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "concept_key": "low_crouch",
+  "display_name": "Low Crouch",
+  "compatible_base_models": [
+    "Pony",
+    "Anima"
+  ],
+  "recipes": [
+    {
+      "recipe_id": "low_crouch_pony_rooftop_01",
+      "source": "local",
+      "positive_prompt": "adult courier in a practical low crouch on a rain-soaked rooftop, both feet and hands readable, low camera angle, balanced silhouette, city lights behind",
+      "negative_prompt": "floating feet, crossed legs, broken knees, missing hands, duplicate limbs, distorted perspective",
+      "loras": [],
+      "seed": "69381724",
+      "cfg": 5.0,
+      "steps": 32,
+      "sampler": "euler",
+      "model_name": "Pony base workflow",
+      "base_model": "Pony",
+      "notes": "Keep one knee forward and leave enough ground in frame to validate the stance.",
+      "quality_score": 8.5,
+      "date_added": "2026-07-22T00:00:00Z",
+      "tags": [
+        "pose",
+        "action",
+        "low-angle"
+      ]
+    },
+    {
+      "recipe_id": "low_crouch_anima_forest_01",
+      "source": "local",
+      "positive_prompt": "adult explorer in a stable low crouch beside a forest trail, full body in frame, weight on the rear leg, hands clear, natural overcast light, documentary camera",
+      "negative_prompt": "floating pose, broken joints, missing fingers, extra limbs, body crop, distorted boots",
+      "loras": [],
+      "seed": "91540268",
+      "cfg": 4.2,
+      "steps": 26,
+      "sampler": "dpmpp_2m",
+      "model_name": "Anima base workflow",
+      "base_model": "Anima",
+      "notes": "A slight three-quarter camera keeps the crouch readable without foreshortening the legs excessively.",
+      "quality_score": 7.9,
+      "date_added": "2026-07-22T00:00:00Z",
+      "tags": [
+        "pose",
+        "outdoor",
+        "documentary"
+      ]
+    }
+  ]
+}

@@ -26,3 +26,4 @@ These rules are persistent project constraints for every future agent working on
 - Pony uses `image_model_mode: "pony"` and the existing VioletsT2I route.
 - The Violets LTX profile injects DMD at `1.0` and JoyAI at `0.5` in the backend.
 - Script-to-Film remains separate from Music Video audio/SRT/mux paths.
+- The Concept / Pose Knowledge Base is a separate local recipe library under `knowledge_base/concepts/`. It must not write to Character Bible, LoRA metadata, Script-to-Film prompts, or Music Video paths unless a later explicitly approved phase adds that integration.

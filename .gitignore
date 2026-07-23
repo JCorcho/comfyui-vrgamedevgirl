@@ -19,3 +19,7 @@ flow_automation/chatgpt_outputs/*
 # Per-user Script-to-Film LoRA metadata. The schema and guides are versioned,
 # but this store records the local model collection and is intentionally private.
 data/lora_knowledge_base.json
+
+# Per-user Concept / Pose recipes are local overrides of the tracked examples.
+knowledge_base/concepts/local/*.json
+!knowledge_base/concepts/local/.gitkeep

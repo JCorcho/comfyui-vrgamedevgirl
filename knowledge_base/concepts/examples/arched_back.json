@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "concept_key": "arched_back",
+  "display_name": "Arched Back",
+  "compatible_base_models": [
+    "Pony",
+    "Anima"
+  ],
+  "recipes": [
+    {
+      "recipe_id": "arched_back_pony_studio_01",
+      "source": "local",
+      "positive_prompt": "full-body adult dancer in a controlled arched-back stretch, stable planted feet, clear shoulder line, three-quarter studio view, athletic anatomy, softbox lighting",
+      "negative_prompt": "cropped body, broken spine, twisted limbs, duplicate legs, extra arms, warped hands, motion blur",
+      "loras": [],
+      "seed": "18420591",
+      "cfg": 5.5,
+      "steps": 30,
+      "sampler": "euler",
+      "model_name": "Pony base workflow",
+      "base_model": "Pony",
+      "notes": "Neutral anatomy-reference recipe. Keep the camera low enough to read the curve without hiding both feet.",
+      "quality_score": 8.2,
+      "date_added": "2026-07-22T00:00:00Z",
+      "tags": [
+        "pose",
+        "anatomy",
+        "studio"
+      ]
+    },
+    {
+      "recipe_id": "arched_back_anima_theatre_01",
+      "source": "local",
+      "positive_prompt": "adult contemporary dancer holding a deliberate backbend on a theatre stage, full figure visible, balanced weight distribution, side rim light, cinematic medium-wide camera",
+      "negative_prompt": "cropped feet, impossible torso, dislocated shoulders, duplicate person, extra limbs, overexposed face",
+      "loras": [],
+      "seed": "72844103",
+      "cfg": 4.5,
+      "steps": 28,
+      "sampler": "dpmpp_2m",
+      "model_name": "Anima base workflow",
+      "base_model": "Anima",
+      "notes": "Use a medium-wide framing so the physical mechanics remain legible.",
+      "quality_score": 7.8,
+      "date_added": "2026-07-22T00:00:00Z",
+      "tags": [
+        "pose",
+        "dance",
+        "stage"
+      ]
+    }
+  ]
+}
