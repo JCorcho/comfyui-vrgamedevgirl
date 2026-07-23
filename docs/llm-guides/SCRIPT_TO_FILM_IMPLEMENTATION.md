@@ -149,6 +149,8 @@ The shared Planner's `field()` helper supports `commitOnly` inputs for edits who
 
 `render()` snapshots the open `details` elements by stable scene ID and the Film body scroll position before replacing the modal contents. It restores the same expanded scenes and scroll position on the next animation frame. Every recipe suggestion/review map is also keyed by that stable scene ID. Preserve this behavior whenever asynchronous work refreshes the shared Planner; otherwise a result for a later scene appears inaccessible after a refresh resets the user to shot one.
 
+LoRA resolution accepts actual Knowledge Base filenames and, only when unambiguous, a verified Civitai/base trigger alias. It canonicalizes the latter to the installed filename before resolving. Resolve keyframe metadata using the selected Film `keyframe_model` (`pony` or `anima`), never a hardcoded Pony target. The Knowledge Base appends the matching prompt tokens; it does not mutate the user-owned Violets T2I graph, which remains responsible for loading the actual LoRA and its weight. Completed Film clips are hydrated from either `video_path` or `rendered_video_path` into normal Builder video history, and the shared Planner receives a per-scene completion callback so Builder and Wizard visibly update while a build runs.
+
 If adding a Film field, add it in all four places: backend `_normalize_scene`, planner editing UI, Builder session/history persistence, and Wizard’s shared planner entry point. Update `WIZARD_EDITOR_PARITY.md` in the same commit.
 
 ## Validation and smoke test

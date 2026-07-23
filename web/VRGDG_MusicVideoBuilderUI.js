@@ -10172,7 +10172,7 @@ function openBuilder(node) {
     if (!Array.isArray(segment.video_history)) normalizeSegmentVideoHistory(segment);
     const history = Array.isArray(segment?.video_history) ? segment.video_history : [];
     const index = Math.max(0, Math.min(history.length - 1, Number(segment?.video_history_index || 0)));
-    const path = history[index] || segment?.video_path || "";
+    const path = history[index] || segment?.video_path || segment?.rendered_video_path || "";
     return isLikelyVideoPath(path) ? path : "";
   }
 
@@ -33178,7 +33178,11 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     state.segments.forEach((segment, index) => {
       const segmentId = String(segment?.id || "").trim();
       const reflowed = (segmentId ? byId.get(segmentId) : null) || reflowedScenes[index];
-      if (reflowed && typeof reflowed === "object") Object.assign(segment, reflowed);
+      if (reflowed && typeof reflowed === "object") {
+        Object.assign(segment, reflowed);
+        const persistedVideo = String(segment.video_path || segment.rendered_video_path || "").trim();
+        if (persistedVideo && isLikelyVideoPath(persistedVideo)) activateSegmentVideoPath(segment, persistedVideo, segment.video_thumbnail_path || "");
+      }
     });
     state.duration = Math.max(0, ...state.segments.map((segment) => Number(segment.end || 0)));
     ensureAllSegmentRuntimeFields();
@@ -33251,7 +33255,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
         llm_api_model: state.llmApiModel,
       }),
       applyPlan: applyScriptToFilmPlan,
-      build: async () => buildScriptToFilmPipeline({ buildMode: "resume_missing" }),
+      build: async (hooks = {}) => buildScriptToFilmPipeline({ ...hooks, buildMode: "resume_missing" }),
     });
   }
 
@@ -33262,17 +33266,18 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     const span = Number(options.progressSpan ?? 100);
     const pct = (value) => Math.min(100, base + (span * value / 100));
     const label = sceneDisplayName(segment, sceneIndex);
+    const keyframeModel = String(state.scriptToFilm?.keyframe_model || "pony").trim().toLowerCase() === "anima" ? "anima" : "pony";
+    const keyframeModelLabel = keyframeModel === "anima" ? "Anima" : "Pony";
     progress?.set(`Film ${label}: resolving LoRA metadata for this shot…`, pct(4));
     const resolved = await postJson("/vrgdg/script_to_film/resolve_lora_prompts", {
       fps,
       scene: segment,
+      keyframe_model: keyframeModel,
       lora_knowledge_loras: state.scriptToFilm?.lora_knowledge_loras || [],
       style_profile_path: state.scriptToFilm?.style_profile_path || "",
     }, 30000);
     if (resolved?.scene && typeof resolved.scene === "object") Object.assign(segment, resolved.scene);
     const useReference = String(segment.film_render_mode || "i2v_t2av").toLowerCase() !== "t2av";
-    const keyframeModel = String(state.scriptToFilm?.keyframe_model || "pony").trim().toLowerCase() === "anima" ? "anima" : "pony";
-    const keyframeModelLabel = keyframeModel === "anima" ? "Anima" : "Pony";
     const unifiedPrompt = String(segment.unified_ltx_prompt || segment.i2v_prompt || "").trim();
     if (!unifiedPrompt) throw new Error(`${label}: Script-to-Film needs a unified LTX visual + audio prompt.`);
     if (useReference && !String(segment.character_reference_path || selectedSegmentImagePath(segment) || "").trim()) {
@@ -33293,6 +33298,7 @@ Chrome vault corridor = Sealed industrial passage...</pre>
       fps,
       scene_number: sceneNumber,
       project_folder: String(projectInput.value || state.projectFolder || "").trim(),
+      keyframe_model: keyframeModel,
       unified_ltx_prompt: unifiedPrompt,
       scene: segment,
       character_bible: segment.character_bible || {},
@@ -33370,6 +33376,11 @@ Chrome vault corridor = Sealed industrial passage...</pre>
     syncPreview(segment);
     render();
     await autoSaveSessionQuiet(`Film scene ${sceneNumber} native-audio render complete`);
+    try {
+      await options.onSceneComplete?.({ scene_id: segment.id, scene_number: sceneNumber, video_path: finalVideoPath });
+    } catch (error) {
+      console.warn("[VRGDG Script-to-Film] Planner progress refresh failed", error);
+    }
     progress?.set(`Film ${label}: ready (${Number(reflow.measured_duration_seconds || segment.target_duration_seconds).toFixed(2)} seconds); later scenes reflowed.`, pct(100));
     return finalVideoPath;
   }

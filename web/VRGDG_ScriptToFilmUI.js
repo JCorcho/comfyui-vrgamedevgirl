@@ -670,7 +670,8 @@ export function openScriptToFilmPlanner(config) {
         else expandedSceneIds.delete(sceneId);
       });
       const title = scene.label || `Film shot ${index + 1}`;
-      details.append(Object.assign(document.createElement("summary"), { textContent: `${index + 1}. ${title} · ${Number(scene.target_duration_seconds || 0).toFixed(2)}s · ${scene.planned_frames || framesForDuration(scene.target_duration_seconds, state.scriptToFilm.fps)} frames` }));
+      const renderedVideo = String(scene.video_path || scene.rendered_video_path || "").trim();
+      details.append(Object.assign(document.createElement("summary"), { textContent: `${index + 1}. ${title} · ${Number(scene.target_duration_seconds || 0).toFixed(2)}s · ${scene.planned_frames || framesForDuration(scene.target_duration_seconds, state.scriptToFilm.fps)} frames${renderedVideo ? " · video ready" : ""}` }));
       const sceneBody = document.createElement("div");
       sceneBody.className = "vrgdg-film-scene-body";
       const core = document.createElement("div"); core.className = "vrgdg-film-grid";
@@ -698,6 +699,12 @@ export function openScriptToFilmPlanner(config) {
         field("Dialogue / spoken content", scene.dialogue, (value) => { scene.dialogue = value; apply(); }, { multiline: true }),
       );
       sceneBody.append(prompts);
+      if (renderedVideo) {
+        sceneBody.append(Object.assign(document.createElement("p"), {
+          className: "vrgdg-film-note",
+          textContent: `Native-audio video rendered: ${renderedVideo}`,
+        }));
+      }
       const continuity = document.createElement("div"); continuity.className = "vrgdg-film-grid";
       for (const name of REQUIRED_FIELDS) {
         const label = name.replaceAll("_", " ");
@@ -937,7 +944,19 @@ export function openScriptToFilmPlanner(config) {
     try {
       build.disabled = true;
       apply("Launching Script-to-Film build… See the progress window for live render status.");
-      const result = await config.build?.();
+      const refreshFromBuilder = () => {
+        const latest = config.snapshot?.() || {};
+        if (Array.isArray(latest.segments)) state.segments = ensureStableSceneIds(clone(latest.segments));
+        if (latest.scriptToFilm && typeof latest.scriptToFilm === "object") state.scriptToFilm = { ...state.scriptToFilm, ...clone(latest.scriptToFilm) };
+        render();
+      };
+      const result = await config.build?.({
+        onSceneComplete: ({ scene_number: sceneNumber } = {}) => {
+          refreshFromBuilder();
+          status.textContent = `Film scene ${sceneNumber || ""} is rendered and visible in this Planner.`.trim();
+        },
+      });
+      refreshFromBuilder();
       const finalPath = String(result?.final_video_path || "").trim();
       status.textContent = finalPath
         ? `Script-to-Film build complete: ${finalPath}`

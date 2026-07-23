@@ -22,6 +22,7 @@ from PIL import Image
 from server import PromptServer
 
 from .VRGDG_LoraKnowledgeBase import (
+    canonical_lora_names,
     list_knowledge,
     load_style_profile,
     normalize_lora_names,
@@ -200,15 +201,26 @@ def _payload_lora_names(payload, scene=None):
     When it does not, the project selection is the non-destructive default.
     """
     source_scene = scene if isinstance(scene, dict) else {}
-    direct = normalize_lora_names(source_scene.get("lora_knowledge_refs", []))
+    direct = canonical_lora_names(source_scene.get("lora_knowledge_refs", []))
     if direct:
         return direct
     source_payload = payload if isinstance(payload, dict) else {}
-    direct = normalize_lora_names(source_payload.get("lora_knowledge_loras", source_payload.get("lora_knowledge_refs", [])))
+    direct = canonical_lora_names(source_payload.get("lora_knowledge_loras", source_payload.get("lora_knowledge_refs", [])))
     if direct:
         return direct
     film_config = source_payload.get("script_to_film", {})
-    return normalize_lora_names(film_config.get("lora_knowledge_loras", [])) if isinstance(film_config, dict) else []
+    return canonical_lora_names(film_config.get("lora_knowledge_loras", [])) if isinstance(film_config, dict) else []
+
+
+def _keyframe_model_target(payload, scene):
+    """Use the Film project's current keyframe family for LoRA compatibility."""
+    source_payload = payload if isinstance(payload, dict) else {}
+    source_scene = scene if isinstance(scene, dict) else {}
+    film_config = source_payload.get("script_to_film", {}) if isinstance(source_payload.get("script_to_film"), dict) else {}
+    return _safe_text(
+        source_payload.get("keyframe_model", source_scene.get("keyframe_model", film_config.get("keyframe_model", "pony"))),
+        80,
+    ).lower() or "pony"
 
 
 def _payload_style_profile(payload):
@@ -247,10 +259,10 @@ def _resolve_scene_lora_knowledge(scene, payload=None):
     The stored trigger strings are attached only to the shot prompts.
     """
     source = scene if isinstance(scene, dict) else {}
-    scene_specific_names = normalize_lora_names(source.get("lora_knowledge_refs", []))
+    scene_specific_names = canonical_lora_names(source.get("lora_knowledge_refs", []))
     selected_names = _payload_lora_names(payload or {}, source)
     style_profile = _payload_style_profile(payload or {})
-    keyframe_resolved = resolve_scene_triggers(source, selected_names, "pony")
+    keyframe_resolved = resolve_scene_triggers(source, selected_names, _keyframe_model_target(payload or {}, source))
     ltx_resolved = resolve_scene_triggers(source, selected_names, "ltx")
     source["character_bible"] = sanitize_character_bible(source.get("character_bible", {}), selected_names)
     # Preserve an empty per-scene field so it continues to inherit any future

@@ -30,6 +30,14 @@ class ScriptToFilmUiEditingTests(unittest.TestCase):
         self.assertIn('details.open = previousView.hasSceneState ? expandedSceneIds.has(sceneId) : index === 0;', source)
         self.assertIn('body.scrollTop = previousView.scrollTop;', source)
 
+    def test_shared_planner_reflects_completed_film_clips(self):
+        with open(UI_PATH, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        self.assertIn('video ready', source)
+        self.assertIn('onSceneComplete:', source)
+        self.assertIn('Film scene ${sceneNumber || ""} is rendered and visible in this Planner.', source)
+
 
 if __name__ == "__main__":
     unittest.main()

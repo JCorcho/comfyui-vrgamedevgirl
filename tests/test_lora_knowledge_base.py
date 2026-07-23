@@ -128,6 +128,24 @@ class LoraKnowledgeBaseTests(unittest.TestCase):
         )
         self.assertIn("orange eyes", kb.resolution_fragment(resolved))
 
+    def test_unique_verified_trigger_word_can_resolve_a_scene_lora_reference(self):
+        store = kb.load_store(self.store_path)
+        entry = store["entries"]["TestCharacterPony.safetensors"]
+        entry["base_model_recommendation"] = "anima"
+        entry["civitai_trigger_words"] = ["testponyhero"]
+        entry["trigger_map"]["base"] = "testponyhero"
+        kb.save_store(store, self.store_path)
+
+        names = kb.canonical_lora_names(["testponyhero"], self.store_path)
+        self.assertEqual(["TestCharacterPony.safetensors"], names)
+        resolved = kb.resolve_scene_triggers(
+            {"physical_state_progression": "The adult performer is kneeling."},
+            ["testponyhero"],
+            "anima",
+            self.store_path,
+        )
+        self.assertIn("testponyhero", kb.resolution_fragment(resolved))
+
 
 if __name__ == "__main__":
     unittest.main()

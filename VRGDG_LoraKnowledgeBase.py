@@ -52,6 +52,7 @@ _CAMERA_TAGS = {
 }
 _TARGET_SYNONYMS = {
     "pony": {"pony", "ponyxl", "sdxl"},
+    "anima": {"anima"},
     "ltx": {"ltx", "ltxv", "ltx2", "ltx2.3", "ltx23"},
 }
 
@@ -785,11 +786,51 @@ def _selected_entries(names, path=None):
     store = load_store(path)
     lookup = {name.lower(): entry for name, entry in store["entries"].items()}
     selected = []
-    for name in normalize_lora_names(names):
+    for name in canonical_lora_names(names, path):
         entry = lookup.get(name.lower())
         if entry:
             selected.append(copy.deepcopy(entry))
     return selected
+
+
+def canonical_lora_names(value, path=None):
+    """Return installed metadata filenames for exact or uniquely verified aliases.
+
+    Scene records should normally use the LoRA filename. A trigger word is not
+    a filename, but accepting a *unique* verified Civitai/base trigger as a
+    convenience prevents an accidental trigger-word entry from silently
+    disabling the selected character LoRA. Ambiguous aliases intentionally
+    remain unchanged and therefore do not select an arbitrary LoRA.
+    """
+    store = load_store(path)
+    entries = list(store["entries"].values())
+    exact = {str(entry.get("lora_name", "")).lower(): entry for entry in entries}
+    aliases = {}
+    for entry in entries:
+        name = _safe_text(entry.get("lora_name", ""), 1024)
+        if not name:
+            continue
+        values = list(entry.get("civitai_trigger_words", []) or [])
+        trigger_map = entry.get("trigger_map", {}) if isinstance(entry.get("trigger_map", {}), dict) else {}
+        values.extend(re.split(r"[,;\n]", _safe_text(trigger_map.get("base", ""), 4000)))
+        for raw_alias in values:
+            alias = _safe_text(raw_alias, 2000).lower()
+            if alias:
+                aliases.setdefault(alias, set()).add(name)
+    canonical = []
+    seen = set()
+    for raw_name in normalize_lora_names(value):
+        key = raw_name.lower()
+        entry = exact.get(key)
+        if entry:
+            resolved = _safe_text(entry.get("lora_name", raw_name), 1024)
+        else:
+            matches = aliases.get(key, set())
+            resolved = next(iter(matches)) if len(matches) == 1 else raw_name
+        if resolved and resolved.lower() not in seen:
+            seen.add(resolved.lower())
+            canonical.append(resolved)
+    return canonical
 
 
 def resolve_scene_triggers(scene, lora_names, target, path=None):
