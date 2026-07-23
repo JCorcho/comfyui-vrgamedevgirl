@@ -714,14 +714,15 @@ export function openScriptToFilmPlanner(config) {
           finally { refreshSuggestions.disabled = false; }
         };
         const researchMore = Object.assign(document.createElement("button"), { className: "vrgdg-film-button secondary", textContent: "Research more for this concept" });
-        researchMore.onclick = async () => {
+        const runConceptResearch = async () => {
           try {
             researchMore.disabled = true;
             const latest = await loadSceneSuggestions(scene, { force: true });
             const conceptKey = String(latest?.concept?.concept_key || scene.concept_key || "").trim();
             if (!conceptKey) throw new Error("Add a Concept / pose value before researching more recipes.");
             const review = conceptResearchReviews.get(sceneId) || { safe_only: true, max_candidates: 8, quality_score: 6 };
-            status.textContent = `Researching Civitai for ${conceptKey}; results will require review before they are saved.`;
+            const contentMode = review.safe_only === false ? "adult-allowed" : "safe-only";
+            status.textContent = `Researching ${contentMode} Civitai results for ${conceptKey}; results will require review before they are saved.`;
             const result = await requestJson("/vrgdg/script_to_film/concept_intelligence/research", "POST", {
               concept_query: conceptKey,
               base_model: filmKeyframeModelLabel(state.scriptToFilm.keyframe_model),
@@ -734,6 +735,7 @@ export function openScriptToFilmPlanner(config) {
           } catch (error) { status.textContent = `Concept research error: ${errorMessage(error)}`; }
           finally { researchMore.disabled = false; }
         };
+        researchMore.onclick = () => { void runConceptResearch(); };
         const recipeActions = document.createElement("div");
         recipeActions.className = "vrgdg-film-actions";
         recipeActions.append(refreshSuggestions, researchMore);
@@ -750,7 +752,13 @@ export function openScriptToFilmPlanner(config) {
           const safeOnly = document.createElement("input");
           safeOnly.type = "checkbox";
           safeOnly.checked = review.safe_only !== false;
-          safeOnly.onchange = () => { review.safe_only = safeOnly.checked; };
+          safeOnly.onchange = () => {
+            review.safe_only = safeOnly.checked;
+            review.selected_ids = [];
+            conceptResearchReviews.set(sceneId, review);
+            status.textContent = `Content mode changed to ${safeOnly.checked ? "safe-only" : "adult-allowed"}; refreshing Civitai results now.`;
+            void runConceptResearch();
+          };
           safeWrap.append(safeOnly, document.createTextNode(" Safe-only research (clear for adult-allowed)"));
           const candidateLimit = field("Maximum candidates", review.max_candidates || 8, (value) => { review.max_candidates = Math.max(1, Math.min(20, Number(value || 8))); }, { type: "number" });
           const qualityScore = field("Quality score when saving", review.quality_score ?? 6, (value) => { review.quality_score = Math.max(0, Math.min(10, Number(value || 0))); }, { type: "number" });

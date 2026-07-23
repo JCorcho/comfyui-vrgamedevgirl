@@ -131,7 +131,7 @@ The fields are metadata transfer, not a silent mutation of a saved T2I workflow.
 
 ### Research-more flow
 
-The Film Planner's **Research more for this concept** calls the Phase 2 helper with the inferred/explicit concept and selected Pony/Anima base model. It returns candidates only. The planner displays the same review data (prompt, settings, LoRAs) with checkboxes; `save_researched_scene_recipes()` delegates only checked IDs to Phase 2 `save_approved_candidates()`. After a successful explicit save, the planner invalidates its scene suggestion cache and re-queries the local store. No candidate can be auto-saved or applied.
+The Film Planner's **Research more for this concept** calls the Phase 2 helper with the inferred/explicit concept and selected Pony/Anima base model. It returns candidates only. The planner displays the same review data (prompt, settings, LoRAs) with checkboxes; `save_researched_scene_recipes()` delegates only checked IDs to Phase 2 `save_approved_candidates()`. Toggling the Film Planner's Safe-only checkbox immediately launches a replacement search in the selected safe/adult-allowed mode and clears the prior candidate checks, preventing a stale safe-only result from being mistaken for an adult-allowed one. After a successful explicit save, the planner invalidates its scene suggestion cache and re-queries the local store. No candidate can be auto-saved or applied.
 
 Canvas nodes live in **VRGDG → Knowledge → Script-to-Film Concept Intelligence**:
 
