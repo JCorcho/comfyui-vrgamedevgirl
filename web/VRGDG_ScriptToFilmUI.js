@@ -47,8 +47,11 @@ function injectStyles() {
     .vrgdg-film-recipe-card strong { color:#cffafe; }
     .vrgdg-film-recipe-meta { font-size:12px; color:#bae6fd; line-height:1.4; }
     .vrgdg-film-recipe-preview { font-size:12px; line-height:1.45; color:#cbd5e1; white-space:pre-wrap; }
-    .vrgdg-film-research-candidate { padding:9px; border:1px solid #334155; border-radius:7px; display:grid; gap:6px; }
+    .vrgdg-film-research-candidate { padding:9px; border:1px solid #334155; border-radius:7px; display:grid; gap:6px; overflow:hidden; }
     .vrgdg-film-research-candidate input[type="checkbox"] { width:auto; margin-right:6px; }
+    .vrgdg-film-candidate-media { min-height:210px; max-height:330px; border:1px solid #365a7a; border-radius:6px; overflow:hidden; display:grid; place-items:center; background:#020617; }
+    .vrgdg-film-candidate-image { width:100%; height:100%; min-height:210px; max-height:330px; object-fit:contain; display:block; background:#020617; }
+    .vrgdg-film-candidate-image-fallback { padding:12px; font-size:12px; line-height:1.4; color:#94a3b8; text-align:center; }
   `;
   document.head.appendChild(style);
 }
@@ -236,6 +239,42 @@ function field(label, value, onChange, options = {}) {
   control.addEventListener("change", () => onChange(control.type === "number" ? Number(control.value) : control.value));
   wrap.appendChild(control);
   return wrap;
+}
+
+function candidatePreviewUrl(candidate) {
+  try {
+    const url = new URL(String(candidate?.image_preview_url || "").trim());
+    return url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function createCandidatePreview(candidate) {
+  const media = document.createElement("div");
+  media.className = "vrgdg-film-candidate-media";
+  const previewUrl = candidatePreviewUrl(candidate);
+  if (!previewUrl) {
+    media.append(Object.assign(document.createElement("div"), {
+      className: "vrgdg-film-candidate-image-fallback",
+      textContent: "Civitai did not provide an embeddable preview for this candidate.",
+    }));
+    return media;
+  }
+  const image = document.createElement("img");
+  image.className = "vrgdg-film-candidate-image";
+  image.src = previewUrl;
+  image.alt = `Civitai candidate ${String(candidate?.candidate_id || "preview")}`;
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.onerror = () => {
+    media.replaceChildren(Object.assign(document.createElement("div"), {
+      className: "vrgdg-film-candidate-image-fallback",
+      textContent: "Civitai preview could not be loaded in the Planner. The recipe metadata is still available for review.",
+    }));
+  };
+  media.append(image);
+  return media;
 }
 
 export function openScriptToFilmPlanner(config) {
@@ -787,6 +826,7 @@ export function openScriptToFilmPlanner(config) {
               const loras = (Array.isArray(candidate.loras) ? candidate.loras : []).map((item) => `${item.name || "LoRA"} @ ${Number(item.weight ?? 1)}`).join("; ") || "none";
               candidateCard.append(
                 label,
+                createCandidatePreview(candidate),
                 Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-meta", textContent: `Seed ${candidate.seed || "—"} · CFG ${candidate.cfg ?? "—"} · ${candidate.steps ?? "—"} steps · ${candidate.sampler || "sampler unspecified"}` }),
                 Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-meta", textContent: `LoRAs: ${loras}` }),
                 Object.assign(document.createElement("div"), { className: "vrgdg-film-recipe-preview", textContent: String(candidate.positive_prompt || "").slice(0, 320) || "No positive prompt stored." }),
